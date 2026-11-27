@@ -1,0 +1,66 @@
+name: church-comms
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: comms
+      POSTGRES_PASSWORD: comms
+      POSTGRES_DB: comms
+    # Schema is applied on first boot of an empty volume.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comms -d comms"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    # appendonly so a restart does not lose queued batches that were accepted
+    # with a 202 but not yet sent.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://comms:comms@db:5432/comms
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://comms:comms@db:5432/comms
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    # The unit of scale. `docker compose up --scale worker=8` to add throughput;
+    # the Redis consumer group splits batches across them automatically.
+    deploy:
+      replicas: 2
+
+volumes:
+  pgdata:
+  redisdata:

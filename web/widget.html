@@ -1,0 +1,2717 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Communications</title>
+<!--
+  The document inside the iframe. Served from the HGS origin by server.py, so
+  every /api call is same-origin. Partner teams point an iframe at /embed via
+  embed.js and never host this file.
+
+  Eight sections: Dashboard, New message, Sent, Replies, People, Groups,
+  Reports, Analytics. Intended to replace the PWA, not sit beside it.
+
+  Auth is off; the service treats every request as the seeded church admin.
+-->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Red+Hat+Text:wght@400;500;600;700&display=swap');
+
+:root{
+  --top-bar:#0F3E80; --primary:#1D63C6; --primary-hi:#F1F6FC; --primary-mute:#E6EFFE;
+  --ink:#363636; --ink-2:#6B6B6B; --ink-3:#A6A6A6;
+  --page:#F3F3F7; --surface:#FFFFFF; --line:#ECECEE; --line-2:#D9D9DD;
+  --sent:#3CA455; --sched:#E0A800; --emg:#C84040; --emg-bg:#F0D6D6;
+  --ok:#2F8845; --ok-bg:#F1F9F3; --warn:#9A6212; --warn-bg:#FDF3E7;
+  --rail:#292C2D; --rail-hi:#222525;
+  --r:10px; --gut:16px;
+}
+body[data-theme="dark"]{
+  --surface:#1B1D1E; --page:#141516; --ink:#F2F2F2; --ink-2:#A6A6A6; --ink-3:#6E7173;
+  --line:#2E3132; --line-2:#3A3D3E; --primary-hi:#16243A; --primary-mute:#1B2D4A;
+  --ok-bg:#15301b; --warn-bg:#37290b; --emg-bg:#3a1818;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{scrollbar-width:none}
+html::-webkit-scrollbar{width:0;display:none}
+html,body{margin:0;padding:0}
+body{
+  font-family:'Red Hat Text',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-size:14px;line-height:1.45;color:var(--ink);background:var(--surface);
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+button{font:inherit}
+a{color:var(--primary)}
+
+/* ---------- shell ---------- */
+/* Top bar, not a side rail. This module is embedded inside a host that has its
+   own navigation; a second left rail puts two navigations at the same visual
+   depth and the user cannot tell which level they are in. A horizontal bar
+   reads as content chrome, which is what an embedded module is - and it gives
+   back ~190px of width to a partner who drops this into a narrow column.
+   Sections that do not fit are moved into the overflow menu by measurement
+   (fitNav), not by a hard-coded split, because a host can filter `views` and
+   the iframe can be any width. */
+.shell{display:flex;flex-direction:column;align-items:stretch;min-height:100%}
+.topbar{
+  flex:none;display:flex;align-items:center;gap:2px;padding:0 6px;
+  background:var(--rail);position:relative;
+}
+.topbar button{
+  display:inline-flex;align-items:center;gap:7px;border:0;background:transparent;
+  color:#C9CCCE;padding:11px 11px;cursor:pointer;font:inherit;font-size:13.5px;
+  font-weight:600;position:relative;white-space:nowrap;border-radius:0;
+}
+.topbar button:hover{color:#fff}
+.topbar button.on{color:#fff}
+.topbar button.on::after{
+  content:'';position:absolute;left:9px;right:9px;bottom:0;height:2px;
+  border-radius:2px 2px 0 0;background:#fff;
+}
+.topbar button:focus-visible{outline:2px solid #fff;outline-offset:-3px}
+.topbar .ic{flex:none;opacity:.8;font-size:13px}
+.topbar .bdg{
+  min-width:18px;padding:0 5px;background:var(--emg);color:#fff;border-radius:999px;
+  font-size:10.5px;font-weight:700;line-height:18px;text-align:center;
+}
+.topbar button[hidden]{display:none}
+
+/* the tri-dot */
+.topbar .more{margin-left:auto;flex:none;font-size:16px;letter-spacing:1px;padding:11px 12px}
+.topbar .more .dot{
+  position:absolute;top:8px;right:9px;width:6px;height:6px;border-radius:50%;
+  background:var(--emg);
+}
+.topbar .more[aria-expanded="true"]{color:#fff;background:var(--rail-hi)}
+
+.navmenu{
+  position:absolute;top:100%;right:6px;z-index:40;min-width:196px;padding:5px;
+  background:var(--surface);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 12px 28px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:1px;
+}
+.navmenu button{
+  color:var(--ink);justify-content:flex-start;width:100%;border-radius:7px;
+  padding:9px 10px;font-size:13.5px;
+}
+.navmenu button:hover{background:var(--page);color:var(--ink)}
+.navmenu button.on{background:var(--primary-hi);color:var(--primary)}
+.navmenu button.on::after{display:none}
+.navmenu .bdg{margin-left:auto}
+
+.main{flex:1;min-width:0;background:var(--surface)}
+.body{padding:var(--gut)}
+.compact .body{--gut:12px}
+.compact .topbar button{padding:9px 9px}
+
+/* ---------- primitives ---------- */
+.hdr{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.hdr h1{font-size:17px;font-weight:700;margin:0;flex:1;min-width:150px;letter-spacing:-.015em}
+.hdr .org{display:block;font-size:12px;font-weight:400;color:var(--ink-2)}
+.credits{
+  display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  background:var(--primary-hi);color:var(--primary);padding:5px 10px;border-radius:999px;
+  white-space:nowrap;
+}
+.credits.low{background:var(--warn-bg);color:var(--warn)}
+.credits.out{background:var(--emg-bg);color:var(--emg)}
+.field{margin-bottom:16px}
+.lbl{
+  display:flex;align-items:baseline;gap:8px;font-size:12px;font-weight:600;color:var(--ink-2);
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px;
+}
+.lbl .hint{font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink-3)}
+.btn{
+  width:100%;border:0;border-radius:var(--r);padding:14px;font-weight:700;font-size:15px;
+  cursor:pointer;background:var(--primary);color:#fff;
+}
+.btn:disabled{background:var(--line);color:var(--ink-3);cursor:not-allowed}
+.btn.emg{background:var(--emg)}
+.btn.ghost{background:transparent;color:var(--primary);font-weight:600;font-size:14px;padding:10px}
+.btn.sm{width:auto;padding:8px 14px;font-size:13px;border-radius:8px;font-weight:600}
+.btn.out{background:transparent;color:var(--ink);border:1px solid var(--line-2)}
+.btn.out:hover{border-color:var(--ink-3)}
+.btn.danger{background:var(--emg)}
+.row-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.note{display:flex;gap:9px;align-items:flex-start;font-size:12px;line-height:1.5;color:var(--ink-2);margin-top:10px}
+.note .i{flex:none;width:16px;height:16px;border-radius:50%;background:var(--line);
+  display:grid;place-items:center;font-size:11px;font-weight:700;margin-top:1px}
+.note.warn{color:var(--warn)} .note.warn .i{background:var(--warn-bg);color:var(--warn)}
+.note.danger{color:var(--emg)} .note.danger .i{background:var(--emg-bg);color:var(--emg)}
+.empty{text-align:center;color:var(--ink-2);padding:44px 20px;font-size:13px}
+.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:5px}
+.back{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;
+  color:var(--primary);font-weight:600;font-size:13px;cursor:pointer;padding:0;margin-bottom:12px}
+input[type=text],input[type=search],input[type=email],input[type=tel],select,textarea{
+  width:100%;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;
+  font:inherit;color:inherit;background:var(--surface);outline:0;
+}
+textarea{resize:vertical;min-height:110px}
+input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-mute)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:520px){.two{grid-template-columns:1fr}}
+
+/* ---------- tiles ---------- */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px;margin-bottom:18px}
+.tile{background:var(--page);border-radius:var(--r);padding:13px 14px}
+.tile b{display:block;font-size:22px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.tile span{font-size:11.5px;color:var(--ink-2);display:block;margin-top:2px}
+.tile.go b{color:var(--primary)} .tile.ok b{color:var(--ok)}
+.tile.warn b{color:var(--warn)} .tile.bad b{color:var(--emg)}
+.tile.click{cursor:pointer} .tile.click:hover{background:var(--primary-hi)}
+
+/* ---------- lists / cards ---------- */
+.list{display:flex;flex-direction:column;gap:8px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:7px}
+.card:hover{border-color:var(--line-2)}
+.card.flat{cursor:default}
+.card .top{display:flex;align-items:baseline;gap:10px}
+.card .top b{flex:1;font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .top time{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+.card .prev{font-size:13px;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden}
+.card .meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
+  padding:2px 8px;border-radius:999px;background:var(--line);color:var(--ink-2);white-space:nowrap}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:2px 0 4px}
+.tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+  padding:9px 12px;font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--primary);border-bottom-color:var(--primary)}
+.tab i{font-style:normal;font-size:11px;font-weight:700;background:var(--line);
+  color:var(--ink-2);border-radius:9px;padding:1px 6px;min-width:18px;text-align:center}
+.tab.on i{background:var(--primary-hi);color:var(--primary)}
+.tab.warn i{background:var(--warn-bg);color:var(--warn)}
+.tab:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.go{background:var(--primary-hi);color:var(--primary)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.bad{background:var(--emg-bg);color:var(--emg)}
+.pill .d{width:6px;height:6px;border-radius:50%;background:currentColor}
+.spin{display:inline-block;width:10px;height:10px;border-radius:50%;
+  border:2px solid var(--line-2);border-top-color:var(--primary);animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.avatar{width:34px;height:34px;border-radius:50%;flex:none;display:grid;place-items:center;
+  font-size:12px;font-weight:700;background:var(--primary-mute);color:var(--primary)}
+.trow{display:flex;gap:11px;align-items:flex-start}
+.unread{width:8px;height:8px;border-radius:50%;background:var(--primary);flex:none;align-self:center}
+
+/* ---------- table ---------- */
+.tbl{border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.tbl .h,.tbl .r{display:flex;align-items:center;gap:10px;padding:9px 12px}
+.tbl .h{background:var(--page);font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--ink-2)}
+.tbl .r{border-top:1px solid var(--line);font-size:13px}
+.tbl .r.click{cursor:pointer}
+.tbl .r.click:hover{background:var(--primary-hi)}
+.tbl .c-main{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl .c-sub{flex:1;min-width:0;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl .r.health .c-main,.tbl .r.health .c-sub{white-space:normal;overflow:visible;
+  text-overflow:clip}
+.tbl .r.health{align-items:flex-start}
+.tbl .c-num{width:72px;text-align:right;font-variant-numeric:tabular-nums;flex:none}
+.tbl .c-tag{width:116px;text-align:right;flex:none}
+@media (max-width:560px){.tbl .c-sub{display:none}}
+.pager{display:flex;align-items:center;gap:10px;justify-content:center;margin-top:12px;font-size:13px;color:var(--ink-2)}
+.pager button{border:1px solid var(--line-2);background:var(--surface);color:var(--ink);
+  border-radius:7px;padding:6px 12px;cursor:pointer;font-weight:600;font-size:13px}
+.pager button:disabled{opacity:.4;cursor:not-allowed}
+
+/* ---------- compose ---------- */
+.recips{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);
+  padding:8px;min-height:46px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.recips:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-mute)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;
+  background:var(--primary-mute);color:var(--primary);padding:5px 8px 5px 10px;border-radius:7px}
+.chip .n{font-weight:400;opacity:.75}
+.chip button{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font-size:15px;line-height:1;opacity:.6}
+.chip button:hover{opacity:1}
+.chip.locked{background:var(--line);color:var(--ink-2)}
+.recips input{border:0;outline:0;background:transparent;color:inherit;font:inherit;flex:1;min-width:120px;padding:5px 4px;box-shadow:none}
+.recips input:focus{box-shadow:none;border:0}
+.results{border:1px solid var(--line);border-top:0;border-radius:0 0 var(--r) var(--r);max-height:220px;overflow-y:auto;margin-top:-1px}
+.results:empty{display:none}
+.res{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+.res:last-child{border-bottom:0}
+.res:hover,.res.on{background:var(--primary-hi)}
+.res .ico{width:26px;height:26px;border-radius:6px;flex:none;display:grid;place-items:center;
+  font-size:11px;font-weight:700;background:var(--primary-mute);color:var(--primary)}
+.res .ico.person{border-radius:50%;background:var(--line);color:var(--ink-2)}
+.res .t{flex:1;min-width:0}
+.res .t b{display:block;font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.res .t span{font-size:12px;color:var(--ink-2)}
+.res .cnt{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.res-empty{padding:14px 12px;font-size:13px;color:var(--ink-2);text-align:center}
+.chans{display:flex;flex-wrap:wrap;gap:8px}
+.chan{display:inline-flex;align-items:center;gap:7px;cursor:pointer;border:1px solid var(--line);
+  border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;color:var(--ink-2);
+  background:var(--surface);user-select:none}
+.chan:hover{border-color:var(--line-2)}
+.chan.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.chan.off{opacity:.4;cursor:not-allowed}
+.chan .dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.55}
+.chan.on .dot{opacity:1}
+.meter{display:flex;align-items:center;gap:10px;margin-top:7px;font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.meter .bar{flex:1;height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.meter .bar i{display:block;height:100%;background:var(--primary);transition:width .15s}
+.meter.warn .bar i{background:var(--sched)}
+.meter.over .bar i{background:var(--emg)}
+.meter.over{color:var(--emg);font-weight:600}
+.summary{background:var(--page);border-radius:var(--r);padding:12px 14px;margin-bottom:12px;font-size:13px}
+.summary .row{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.summary .row b{font-weight:600;font-variant-numeric:tabular-nums}
+.summary .row.total{border-top:1px solid var(--line);margin-top:6px;padding-top:8px;font-weight:600}
+.emgbar{display:flex;align-items:center;gap:10px;background:var(--emg-bg);color:var(--emg);
+  border-radius:var(--r);padding:10px 12px;margin-bottom:14px;font-size:13px;font-weight:600}
+.emgbar button{margin-left:auto;border:0;background:transparent;color:inherit;font-weight:600;text-decoration:underline;cursor:pointer}
+
+/* ---------- message detail ---------- */
+.quote{background:var(--page);border-radius:var(--r);padding:12px 14px;font-size:13.5px;
+  margin-bottom:14px;white-space:pre-wrap;word-break:break-word}
+
+/* ---------- conversation ---------- */
+.conv{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.bub{max-width:78%;padding:9px 13px;border-radius:17px;font-size:14px;line-height:1.4;word-break:break-word;white-space:pre-wrap}
+.bub.in{align-self:flex-start;background:var(--line);color:var(--ink);border-bottom-left-radius:5px}
+.bub.out{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:5px}
+.bub .when{display:block;font-size:10.5px;opacity:.65;margin-top:3px}
+.bub.in .when{color:var(--ink-2)}
+.replybox{display:flex;gap:8px;align-items:flex-end}
+.replybox textarea{min-height:44px;max-height:120px;border-radius:21px;padding:11px 15px;resize:none}
+.replybox button{border:0;background:var(--primary);color:#fff;width:44px;height:44px;flex:none;border-radius:50%;cursor:pointer;font-size:17px}
+.replybox button:disabled{background:var(--line);color:var(--ink-3);cursor:not-allowed}
+.privnote{font-size:11.5px;color:var(--ink-3);text-align:center;margin:8px 0 10px}
+
+/* ---------- charts ---------- */
+.chart{display:flex;align-items:flex-end;gap:7px;height:150px;padding:0 2px;
+  border-bottom:1px solid var(--line);margin-bottom:6px}
+.chart .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:3px;height:100%;min-width:0}
+.chart .col i{display:block;width:100%;max-width:34px;background:var(--primary);border-radius:3px 3px 0 0;min-height:2px}
+.chart .col .v{font-size:10.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.xaxis{display:flex;gap:7px;font-size:10.5px;color:var(--ink-3)}
+.xaxis span{flex:1;text-align:center;min-width:0;overflow:hidden;white-space:nowrap}
+.hbars{display:flex;flex-direction:column;gap:9px}
+.hbar{display:grid;grid-template-columns:minmax(78px,138px) 1fr 58px;gap:10px;align-items:center;font-size:13px}
+.hbar .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbar .track{height:16px;background:var(--line);border-radius:4px;overflow:hidden}
+.hbar .track i{display:block;height:100%;background:var(--primary);border-radius:4px}
+.hbar .val{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+
+/* ---------- undo / toast / boot ---------- */
+.undo{position:sticky;bottom:0;margin:12px calc(var(--gut)*-1) calc(var(--gut)*-1);
+  background:#2B2E2F;color:#fff;padding:13px var(--gut);display:flex;align-items:center;gap:12px;font-size:13px}
+.undo span{flex:1}
+.undo button{border:0;background:transparent;color:#6FA8F5;font-weight:700;text-transform:uppercase;letter-spacing:.05em;cursor:pointer;font-size:12px}
+.boot{padding:48px 16px;text-align:center;color:var(--ink-2);font-size:13px}
+.boot .sp{width:22px;height:22px;margin:0 auto 12px;border-radius:50%;
+  border:2px solid var(--line);border-top-color:var(--primary);animation:sp .7s linear infinite}
+.fatal{margin:16px;padding:14px;border-radius:var(--r);background:var(--emg-bg);color:var(--emg);font-size:13px}
+.fatal b{display:block;margin-bottom:4px}
+.toast{position:fixed;left:50%;bottom:18px;transform:translate(-50%,90px);background:#2B2E2F;color:#fff;
+  padding:11px 17px;border-radius:9px;font-size:13px;font-weight:600;transition:transform .2s;z-index:50;max-width:88%}
+.toast.show{transform:translate(-50%,0)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:grid;place-items:center;padding:18px;z-index:60}
+.modal .box{background:var(--surface);border-radius:12px;padding:18px;width:min(420px,100%);max-height:90vh;overflow-y:auto}
+.modal h2{font-size:16px;margin:0 0 12px}
+</style>
+</head>
+<body>
+<div id="root"><div class="boot"><div class="sp"></div>Loading…</div></div>
+<div class="toast" id="toast"></div>
+<div id="modal"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* =========================================================================
+   API
+   ========================================================================= */
+var API = {
+  base:'/api',
+  token:null,                 // AUTH: forwarded from the host; service ignores it for now
+  async call(path, opts){
+    opts = opts || {};
+    var res = await fetch(this.base + path, {
+      method: opts.method || 'GET',
+      credentials:'same-origin',
+      headers: Object.assign({'Accept':'application/json'},
+        opts.body ? {'Content-Type':'application/json'} : {},
+        this.token ? {'Authorization':'Bearer ' + this.token} : {}),
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    var data = null;
+    try { data = await res.json(); } catch(e){}
+    if(res.status === 401){ var e1 = new Error('token_expired'); e1.code = 401; throw e1; }
+    if(!res.ok){
+      var e2 = new Error((data && data.errors && data.errors.join(' ')) ||
+                         (data && data.error) || ('HTTP ' + res.status));
+      e2.errors = (data && data.errors) || null;
+      throw e2;
+    }
+    return data;
+  },
+  get(p){ return this.call(p); },
+  post(p,b){ return this.call(p,{method:'POST', body:b||{}}); },
+  patch(p,b){ return this.call(p,{method:'PATCH', body:b||{}}); },
+  del(p,b){ return this.call(p,{method:'DELETE', body:b||{}}); }
+};
+
+/* =========================================================================
+   NAV
+   ========================================================================= */
+// Order IS priority. The bar fills from the top of this list and whatever does
+// not fit drops into the tri-dot, so the daily drivers come first: write a
+// message, read the replies, check what went out, look people up. Templates,
+// Keywords and Polls are set-up-then-forget, and Reports/Analytics/Settings
+// are occasional, so those are the right things to lose first on a narrow
+// embed. Separators are gone: they meant something in a vertical rail and
+// nothing in a horizontal bar.
+var NAV = [
+  {k:'dashboard', label:'Dashboard',   ic:'▦'},
+  {k:'compose',   label:'New message', ic:'✎'},
+  {k:'replies',   label:'Inbox',       ic:'↺'},
+  {k:'sent',      label:'Sent',        ic:'✉'},
+  {k:'people',    label:'People',      ic:'☺'},
+  {k:'groups',    label:'Groups',      ic:'◉'},
+  {k:'templates', label:'Templates',   ic:'⧉'},
+  {k:'keywords',  label:'Keywords',    ic:'#'},
+  {k:'polls',     label:'Polls',       ic:'☰'},
+  {k:'reports',   label:'Reports',     ic:'≡'},
+  {k:'analytics', label:'Analytics',   ic:'↗'},
+  {k:'settings',  label:'Settings',    ic:'⚙'},
+  {k:'api',       label:'API',         ic:'⥁'}
+];
+var ALL_VIEWS = NAV.map(function(n){ return n.k; });
+
+/* =========================================================================
+   STATE
+   ========================================================================= */
+var S = {
+  booted:false, fatal:null, host:null, cfg:null,
+  view:'dashboard', busy:false,
+  // compose
+  groups:[], audience:[], channels:['text'], text:'', query:'', qResults:[], highlight:-1,
+  emergency:false, sending:false, cost:null, lastSend:null, undoLeft:0, undoTimer:null,
+  // sent
+  messages:[], openMessage:null, loadingDetail:null,
+  // replies
+  threads:[], openThread:null, replyText:'', replying:false,
+  // inbox: which tab, the search term, the staff list, counts per tab
+  inboxState:'open', inboxQ:'', inboxCounts:{}, staff:[],
+  navOpen:false,
+  health:null, integration:null, checking:false,
+  // people
+  people:{rows:[], total:0, page:1, size:25, pages:1}, peopleQ:'', peopleFilter:'',
+  peopleGroup:'', openPerson:null,
+  // groups
+  openGroup:null,
+  // compose extras
+  templateId:null, scheduleAt:'', attachments:[], preview:null, showPreview:false,
+  draftId:null, draftSavedAt:null, autosaveTimer:null, testing:false,
+  // templates
+  templates:[], templateCats:[], mergeFields:[],
+  // keywords, polls, links
+  keywords:[], polls:[], links:[],
+  // drafts
+  drafts:[], showDrafts:false,
+  // reports
+  report:'delivery', reportRows:[],
+  // analytics
+  analytics:null, analyticsDays:180,
+  // dashboard
+  dash:null,
+  opts:{ compact:false, showCredits:true, allowEmergency:true, allowChannelChange:true,
+         lockAudience:false, views:ALL_VIEWS.slice(), autoResize:true }
+};
+
+/* =========================================================================
+   HOST BRIDGE
+   ========================================================================= */
+var BRIDGE = {
+  send:function(type, payload){
+    if(!S.host) return;
+    try { parent.postMessage({source:'hgs-comms', type:type, payload:payload||{}}, S.host); } catch(e){}
+  },
+  lastH:0,
+  measure:function(){
+    var h = Math.ceil(document.getElementById('root').getBoundingClientRect().height) + 2;
+    if(Math.abs(h - this.lastH) > 1){ this.lastH = h; this.send('resize', {height:h}); }
+  },
+  onMessage:function(e){
+    var d = e.data;
+    if(!d || d.source !== 'hgs-comms-host') return;
+    if(d.type === 'init'){
+      if(S.host && e.origin !== S.host) return;
+      S.host = e.origin; BRIDGE.init(d.payload || {}); return;
+    }
+    if(e.origin !== S.host) return;
+    var p = d.payload || {};
+    switch(d.type){
+      case 'setToken': API.token = p.token; if(S.fatal){ S.fatal = null; boot(); } break;
+      case 'setRecipients': S.audience = normalise(p.recipients); refreshCost(); render(); break;
+      case 'prefill':
+        if(typeof p.text === 'string') S.text = p.text.slice(0,1600);
+        if(Array.isArray(p.channels)) S.channels = gate(p.channels);
+        refreshCost(); render(); break;
+      case 'view':
+        if(S.opts.views.indexOf(viewKey(p.view)) > -1) go(viewKey(p.view));
+        break;
+      case 'reset': resetCompose(); render(); break;
+      case 'theme':
+        document.body.dataset.theme = p.theme === 'dark' ? 'dark' : 'light';
+        applyTokens(p.tokens); break;
+    }
+  },
+  init:function(p){
+    // A host that handshakes AFTER the self-boot grace period must not restart
+    // the widget underneath the user: take its token and options, keep state.
+    if(S.booted){
+      if(p.token) API.token = p.token;
+      if(p.options) Object.assign(S.opts, p.options);
+      if(p.theme) document.body.dataset.theme = p.theme === 'dark' ? 'dark' : 'light';
+      applyTokens(p.tokens);
+      if(p.recipients) S.audience = normalise(p.recipients);
+      if(p.view && S.opts.views.indexOf(viewKey(p.view)) > -1) S.view = viewKey(p.view);
+      render();
+      return;
+    }
+    API.token = p.token || null;
+    if(p.apiBase) API.base = p.apiBase;
+    if(p.options) Object.assign(S.opts, p.options);
+    if(Array.isArray(S.opts.views))
+      S.opts.views = S.opts.views.map(viewKey)
+        .filter(function(v){ return ALL_VIEWS.indexOf(v) > -1; });
+    if(!S.opts.views.length) S.opts.views = ALL_VIEWS.slice();
+    if(p.recipients) S.audience = normalise(p.recipients);
+    if(typeof p.text === 'string') S.text = p.text.slice(0,1600);
+    if(p.view && S.opts.views.indexOf(viewKey(p.view)) > -1) S.view = viewKey(p.view);
+    if(p.theme) document.body.dataset.theme = p.theme === 'dark' ? 'dark' : 'light';
+    applyTokens(p.tokens);
+    if(S.opts.compact) document.documentElement.classList.add('compact');
+    boot();
+  }
+};
+
+function applyTokens(tokens){
+  if(!tokens) return;
+  var ok = ['--primary','--primary-hi','--primary-mute','--surface','--page','--ink',
+            '--ink-2','--line','--rail','--r'];
+  Object.keys(tokens).forEach(function(k){
+    if(ok.indexOf(k) === -1) return;
+    if(!/^[#A-Za-z0-9ard(),.%\s-]{1,40}$/.test(String(tokens[k]))) return;
+    document.documentElement.style.setProperty(k, tokens[k]);
+  });
+}
+function normalise(list){
+  if(!Array.isArray(list)) return [];
+  return list.slice(0,50).map(function(r){
+    return {kind: r.kind === 'person' ? 'person' : 'group', id:String(r.id),
+            name:String(r.name || r.id).slice(0,80),
+            count:Number(r.count) || (r.kind === 'person' ? 1 : 0),
+            locked: !!r.locked || !!S.opts.lockAudience};
+  });
+}
+function gate(list){
+  var f = (S.cfg && S.cfg.flags) || {};
+  return (list || []).filter(function(c){ return f[c] !== false; });
+}
+
+/* =========================================================================
+   BOOT + POLL
+   ========================================================================= */
+async function boot(){
+  try{
+    S.cfg = await API.get('/bootstrap');
+    S.channels = gate(S.channels.length ? S.channels : ['text']);
+    S.groups = (await API.get('/groups')).groups || [];
+    if(!S.cfg.flags.twoWay)
+      S.opts.views = S.opts.views.filter(function(v){ return v !== 'replies'; });
+    if(S.opts.views.indexOf(S.view) === -1) S.view = S.opts.views[0];
+    S.booted = true;
+    await load();
+    render();
+    BRIDGE.send('ready', {organizationName:S.cfg.organizationName, flags:S.cfg.flags,
+                          credits:S.cfg.credits, unreadReplies:S.cfg.unreadReplies,
+                          views:S.opts.views});
+    startPoll();
+  }catch(err){
+    S.fatal = err.code === 401 ? 'token_expired' : 'boot_failed';
+    render();
+    BRIDGE.send(err.code === 401 ? 'tokenExpired' : 'error',
+                {code:S.fatal, message:String(err.message || err)});
+  }
+}
+
+// Track, Replies and Dashboard are live: statuses move and messages arrive while
+// you look at them. Poll, but repaint only when something actually changed.
+var pollTimer = null;
+function snapshot(){
+  return JSON.stringify([
+    S.messages.map(function(m){ return [m.id,m.status,m.replies,m.delivery]; }),
+    S.threads.map(function(t){ return [t.id,t.last_at,t.unread,t.state,t.assigned_to]; }),
+    [S.inboxState, S.inboxQ, S.inboxCounts.open, S.inboxCounts.unread,
+     S.inboxCounts.done, S.inboxCounts.review],
+    S.openMessage && [S.openMessage.status, S.openMessage.delivery, S.openMessage.replies],
+    S.openThread && S.openThread.messages.length,
+    S.dash && [S.dash.messages30, S.dash.unreadReplies, S.dash.replies30],
+    S.polls.map(function(x){ return [x.id, x.responses]; }),
+    S.cfg && S.cfg.unreadReplies
+  ]);
+}
+function startPoll(){
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async function(){
+    if(!S.booted || document.hidden || S.busy) return;
+    try{
+      var before = snapshot();
+      S.cfg = await API.get('/bootstrap');
+      await load(true);
+      if(snapshot() !== before) render(); else paintBadge();
+    }catch(e){}
+  }, 2500);
+}
+
+async function load(quiet){
+  var v = S.view;
+  if(v === 'dashboard')      S.dash = await API.get('/dashboard');
+  else if(v === 'sent'){
+    if(S.openMessage) S.openMessage = await API.get('/messages/' + S.openMessage.id);
+    else S.messages = (await API.get('/messages')).messages || [];
+  }
+  else if(v === 'replies'){
+    if(!S.staff.length){ try{ S.staff = (await API.get('/staff')).staff || []; }catch(e){} }
+    if(S.openThread) S.openThread = await API.get('/threads/' + S.openThread.id);
+    else {
+      var r = await API.get('/inbox?state=' + encodeURIComponent(S.inboxState) +
+                            (S.inboxQ ? '&q=' + encodeURIComponent(S.inboxQ) : ''));
+      S.threads = r.threads || []; S.inboxCounts = r.counts || {};
+    }
+  }
+  else if(v === 'people' && !quiet){
+    if(S.openPerson) S.openPerson = await API.get('/people/' + S.openPerson.id);
+    else await loadPeople();
+  }
+  else if(v === 'groups' && !quiet){
+    if(S.openGroup) S.openGroup = await API.get('/groups/' + S.openGroup.id);
+    else S.groups = (await API.get('/groups')).groups || [];
+  }
+  else if(v === 'templates' && !quiet){
+    var tr = await API.get('/templates');
+    S.templates = tr.templates || []; S.templateCats = tr.categories || [];
+    S.mergeFields = tr.mergeFields || [];
+  }
+  else if(v === 'compose' && !quiet){
+    if(!S.templates.length){
+      try{
+        var t2 = await API.get('/templates');
+        S.templates = t2.templates || []; S.mergeFields = t2.mergeFields || [];
+      }catch(e){}
+    }
+    try{ S.drafts = (await API.get('/drafts')).drafts || []; }catch(e){}
+  }
+  else if(v === 'sent' && !quiet && !S.openMessage){
+    try{ S.drafts = (await API.get('/drafts')).drafts || []; }catch(e){}
+  }
+  else if(v === 'keywords' && !quiet)
+    S.keywords = (await API.get('/keywords')).keywords || [];
+  else if(v === 'polls')
+    S.polls = (await API.get('/polls')).polls || [];
+  else if(v === 'api'){
+    // Internal checks are cheap and always fresh. Dependency probes are NOT
+    // fetched here - they only run when someone presses Run checks.
+    S.health = await API.get('/health');
+    if(!S.integration) S.integration = await API.get('/integration');
+  }
+  else if(v === 'reports' && !quiet) await loadReport();
+  else if(v === 'analytics' && !quiet){
+    S.analytics = await API.get('/analytics?days=' + S.analyticsDays);
+    try{ S.links = (await API.get('/links')).links || []; }catch(e){ S.links = []; }
+  }
+}
+
+async function loadPeople(){
+  var q = ['page=' + S.people.page, 'size=' + S.people.size];
+  if(S.peopleQ) q.push('q=' + encodeURIComponent(S.peopleQ));
+  if(S.peopleFilter) q.push('issue=' + S.peopleFilter);
+  if(S.peopleGroup) q.push('group=' + S.peopleGroup);
+  var r = await API.get('/people?' + q.join('&'));
+  S.people = {rows:r.people, total:r.total, page:r.page, size:r.size, pages:r.pages};
+}
+
+async function loadReport(){
+  var map = {delivery:'/reports/delivery?days=90', optouts:'/reports/optouts',
+             invalid:'/reports/invalid', activity:'/reports/activity'};
+  S.reportRows = (await API.get(map[S.report])).rows || [];
+}
+
+/* =========================================================================
+   COMPOSE
+   ========================================================================= */
+function reach(){
+  var seen = {}, n = 0;
+  S.audience.forEach(function(r){
+    var k = r.kind + r.id;
+    if(seen[k]) return; seen[k] = 1;
+    n += r.kind === 'person' ? 1 : r.count;
+  });
+  return n;
+}
+var costSeq = 0;
+async function refreshCost(){
+  var my = ++costSeq;
+  if(!S.audience.length || !S.text.trim()){ S.cost = null; paintTail(); return; }
+  try{
+    // Server-side: overlapping groups must be deduplicated, which the browser
+    // cannot do from group counts alone.
+    var r = await API.post('/reach', {audience:S.audience, channels:S.channels, body:S.text});
+    if(my !== costSeq) return;
+    S.cost = r; paintTail();
+  }catch(e){}
+}
+function shortfall(){
+  if(!S.cost || !S.cfg.flags.creditBased) return 0;
+  var c = S.cost.credits, b = S.cfg.credits;
+  return Math.max(0, c.voice_sms - b.voice_sms) + Math.max(0, c.email - b.email);
+}
+function canSend(){
+  if(S.sending || !S.audience.length || !S.text.trim() || !S.channels.length) return false;
+  var l = S.cfg.limits;
+  if(S.channels.indexOf('text') > -1 && S.text.length > l.sms) return false;
+  if(S.text.length > l.tts) return false;
+  if(!S.emergency && shortfall() > 0) return false;
+  return true;
+}
+async function doSend(){
+  if(!canSend()) return;
+  S.sending = true; render();
+  try{
+    var r = await API.post('/messages', {
+      audience:S.audience, channels:S.channels, body:S.text, emergency:S.emergency,
+      attachments:S.attachments, template_id:S.templateId,
+      scheduled_for:S.scheduleAt || null, source:'embed'
+    });
+    // The draft became a real message; it must not linger in the drafts list.
+    if(S.draftId){ try { await API.del('/drafts/' + S.draftId); } catch(e){} }
+    S.sending = false; S.lastSend = r.message;
+    S.cfg = await API.get('/bootstrap');
+    resetCompose(true);
+    S.view = 'sent'; S.openMessage = null;
+    S.messages = (await API.get('/messages')).messages || [];
+    try{ S.drafts = (await API.get('/drafts')).drafts || []; }catch(e){}
+    if(!r.message.scheduled_for) startUndo();
+    else toast('Scheduled for ' + new Date(r.message.scheduled_for).toLocaleString());
+    render();
+    BRIDGE.send('sent', {messageId:r.message.id, reach:r.message.reach,
+                         channels:r.message.channels, creditsUsed:r.message.credits.total,
+                         emergency:r.message.emergency});
+  }catch(err){
+    S.sending = false; render(); toast(err.message || 'Could not send');
+    BRIDGE.send(err.code === 401 ? 'tokenExpired' : 'error',
+                {code:'send_failed', message:String(err.message || err)});
+  }
+}
+function startUndo(){
+  clearInterval(S.undoTimer);
+  S.undoLeft = (S.cfg.limits && S.cfg.limits.undoSeconds) || 10;
+  S.undoTimer = setInterval(function(){
+    S.undoLeft--;
+    if(S.undoLeft <= 0){ clearInterval(S.undoTimer); S.undoTimer = null; S.lastSend = null; }
+    render();
+  }, 1000);
+}
+async function doUndo(){
+  if(!S.lastSend) return;
+  var id = S.lastSend.id;
+  clearInterval(S.undoTimer); S.undoTimer = null;
+  try{
+    var r = await API.post('/messages/' + id + '/undo');
+    if(r.success){ toast('Message pulled back'); BRIDGE.send('undone', {messageId:id}); }
+    else toast(r.error || 'Too late to undo');
+  }catch(e){ toast(e.message || 'Could not undo'); }
+  S.lastSend = null;
+  S.cfg = await API.get('/bootstrap');
+  S.messages = (await API.get('/messages')).messages || [];
+  render();
+}
+async function saveDraft(){
+  if(!S.text.trim() || S.sending) return;
+  try{
+    var r = await API.post('/messages', {
+      draft:true, draft_id:S.draftId, body:S.text,
+      channels:S.channels, audience:S.audience, attachments:S.attachments,
+      template_id:S.templateId
+    });
+    if(r && r.message) S.draftId = r.message.id;
+    S.draftSavedAt = new Date().toISOString();
+    var t = document.getElementById('tail');
+    if(t) paintTail();
+  }catch(e){ /* autosave must never interrupt typing */ }
+}
+
+async function refreshPreview(){
+  if(!S.showPreview) return;
+  try{
+    S.preview = await API.post('/preview', {audience:S.audience, body:S.text});
+  }catch(e){ S.preview = null; }
+}
+
+function resetCompose(keep){
+  S.text = ''; S.query = ''; S.qResults = []; S.highlight = -1;
+  S.emergency = false; S.cost = null; S.sending = false;
+  S.templateId = null; S.scheduleAt = ''; S.attachments = [];
+  S.preview = null; S.showPreview = false;
+  S.draftId = null; S.draftSavedAt = null;
+  clearTimeout(S.autosaveTimer);
+  if(!keep && !S.opts.lockAudience) S.audience = [];
+}
+
+/* =========================================================================
+   FORMAT
+   ========================================================================= */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function n(x){ return Number(x || 0).toLocaleString('en-US'); }
+function when(iso){
+  if(!iso) return '';
+  var d = new Date(iso), now = new Date(), mins = Math.round((now - d) / 60000);
+  if(mins < 1) return 'just now';
+  if(mins < 60) return mins + 'm ago';
+  if(d.toDateString() === now.toDateString())
+    return d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+  var y = new Date(now); y.setDate(y.getDate() - 1);
+  if(d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+function dateOnly(iso){
+  return iso ? new Date(iso).toLocaleDateString([], {day:'numeric', month:'short', year:'numeric'}) : '';
+}
+function initials(nm){
+  return String(nm || '?').split(/\s+/).map(function(w){ return w[0]; }).slice(0,2).join('').toUpperCase();
+}
+var CH = {text:'Text', email:'Email', voice:'Phone call'};
+var ST = {queued:'Queued', delivered:'Delivered', failed:'Failed', suppressed:'Opted out',
+          answered:'Answered', voicemail:'Voicemail', no_answer:'No answer', cancelled:'Cancelled'};
+var STC = {delivered:'ok', answered:'ok', queued:'go', voicemail:'warn',
+           no_answer:'warn', failed:'bad', suppressed:'', cancelled:''};
+
+/* =========================================================================
+   RENDER
+   ========================================================================= */
+function render(){
+  var root = document.getElementById('root');
+  if(S.fatal){
+    root.innerHTML = '<div class="fatal"><b>' +
+      (S.fatal === 'token_expired' ? 'Session expired' : 'Communications unavailable') + '</b>' +
+      (S.fatal === 'token_expired' ? 'The host application needs to supply a fresh token.'
+        : 'Could not reach the messaging service. Is server.py running?') + '</div>';
+    return BRIDGE.measure();
+  }
+  if(!S.booted){
+    root.innerHTML = '<div class="boot"><div class="sp"></div>Loading your church…</div>';
+    return BRIDGE.measure();
+  }
+
+  var body = S.view === 'dashboard' ? viewDashboard()
+    : S.view === 'compose' ? viewCompose()
+    : S.view === 'sent' ? (S.loadingDetail ? loading('Loading delivery…')
+        : S.openMessage ? viewMessage() : viewSent())
+    : S.view === 'replies' ? (S.openThread ? viewThread() : viewReplies())
+    : S.view === 'people' ? (S.openPerson ? viewPerson() : viewPeople())
+    : S.view === 'groups' ? (S.openGroup ? viewGroup() : viewGroups())
+    : S.view === 'keywords' ? viewKeywords()
+    : S.view === 'polls' ? viewPolls()
+    : S.view === 'templates' ? viewTemplates()
+    : S.view === 'api' ? viewApi()
+    : S.view === 'settings' ? viewSettings()
+    : S.view === 'reports' ? viewReports()
+    : viewAnalytics();
+
+  var showNav = S.opts.views.length > 1;
+  root.innerHTML = '<div class="shell">' + (showNav ? navHtml() : '') +
+                   '<div class="main"><div class="body">' + body + '</div></div></div>';
+  bindDynamic();
+  fitNav();
+  BRIDGE.measure();
+}
+function loading(msg){ return '<div class="boot"><div class="sp"></div>' + esc(msg) + '</div>'; }
+
+function navBadge(k){
+  var c = (k === 'replies') ? (S.cfg.unreadReplies || 0) : 0;
+  if(!c) return '';
+  // Capped at 99+ for two reasons: past about twenty the exact number stops
+  // being information, and a badge that grows from 3 to 4 digits changes the
+  // button's width, which moves the overflow point and makes sections jump
+  // between the bar and the menu on every poll.
+  return '<span class="bdg">' + (c > 99 ? '99+' : c) + '</span>';
+}
+
+function navHtml(){
+  // Every section is rendered into the bar. fitNav() then hides the ones that
+  // do not fit and rebuilds the overflow menu from them, so this does not need
+  // to know the width or which views the host allowed.
+  var h = '<div class="topbar" id="topnav" role="tablist">';
+  NAV.forEach(function(nv){
+    if(S.opts.views.indexOf(nv.k) === -1) return;
+    h += '<button data-act="nav" data-v="' + nv.k + '" role="tab"' +
+         ' aria-selected="' + (S.view === nv.k ? 'true' : 'false') + '"' +
+         ' class="' + (S.view === nv.k ? 'on' : '') + '">' +
+         '<span class="ic" aria-hidden="true">' + nv.ic + '</span>' +
+         esc(nv.label) + navBadge(nv.k) + '</button>';
+  });
+  h += '<button class="more" id="navMore" data-act="navMore" hidden' +
+       ' aria-haspopup="true" aria-expanded="false" aria-label="More sections"' +
+       ' title="More sections">\u22EF</button>';
+  return h + '</div>';
+}
+
+/* Move whatever does not fit into the tri-dot menu.
+   Runs after every render. Measurement happens in the same task as the
+   innerHTML write, so nothing is painted mid-measure and there is no flash. */
+function fitNav(){
+  var bar = document.getElementById('topnav');
+  if(!bar) return;
+  var more = document.getElementById('navMore');
+  var items = [].slice.call(bar.querySelectorAll('button[data-v]'));
+  if(!items.length){ more.hidden = true; return; }
+
+  items.forEach(function(b){ b.hidden = false; });
+  more.hidden = false;
+  var moreW = more.offsetWidth;
+  more.hidden = true;
+
+  var avail = bar.clientWidth - 12;
+  var widths = items.map(function(b){ return b.offsetWidth; });
+  var total = widths.reduce(function(a, b){ return a + b; }, 0);
+
+  var hidden = [];
+  if(total > avail){
+    var limit = avail - moreW, used = 0;
+    items.forEach(function(b, i){
+      used += widths[i];
+      if(used > limit){ b.hidden = true; hidden.push(b.dataset.v); }
+    });
+    // The section you are looking at must never be the one that got hidden -
+    // otherwise nothing in the bar looks selected. Trade it with the last
+    // visible item instead.
+    if(hidden.indexOf(S.view) > -1){
+      var active = items.filter(function(b){ return b.dataset.v === S.view; })[0];
+      var visible = items.filter(function(b){ return !b.hidden; });
+      var victim = visible[visible.length - 1];
+      if(victim){
+        active.hidden = false;
+        victim.hidden = true;
+        hidden.splice(hidden.indexOf(S.view), 1);
+        hidden.push(victim.dataset.v);
+      }
+    }
+    more.hidden = false;
+  }
+
+  // A hidden section with an unread badge must still announce itself, or the
+  // whole point of the badge is lost the moment the window narrows.
+  var dot = hidden.some(function(k){ return navBadge(k) !== ''; });
+  more.innerHTML = '\u22EF' + (dot ? '<span class="dot"></span>' : '');
+
+  var menu = document.getElementById('navmenu');
+  if(menu) menu.remove();
+  if(S.navOpen && hidden.length){
+    var order = NAV.filter(function(nv){ return hidden.indexOf(nv.k) > -1; });
+    var mh = '<div class="navmenu" id="navmenu" role="menu">';
+    order.forEach(function(nv){
+      mh += '<button data-act="nav" data-v="' + nv.k + '" role="menuitem" class="' +
+            (S.view === nv.k ? 'on' : '') + '">' +
+            '<span class="ic" aria-hidden="true">' + nv.ic + '</span>' +
+            esc(nv.label) + navBadge(nv.k) + '</button>';
+    });
+    bar.insertAdjacentHTML('beforeend', mh + '</div>');
+  }
+  more.setAttribute('aria-expanded', S.navOpen && hidden.length ? 'true' : 'false');
+}
+
+function headerHtml(title, sub, withCredits){
+  var h = '<div class="hdr"><h1>' + esc(title) +
+          (sub ? '<span class="org">' + esc(sub) + '</span>' : '') + '</h1>';
+  if(withCredits !== false && S.opts.showCredits && S.cfg.flags.creditBased){
+    var bal = S.cfg.credits.voice_sms, over = (S.cfg.overdrawn || {}).voice_sms || 0;
+    h += over
+      ? '<span class="credits out" title="An emergency send overdrew the balance; billed afterwards">' +
+        n(over) + ' overdrawn</span>'
+      : '<span class="credits' + (bal < 500 ? ' low' : '') + '">' + n(bal) + ' credits</span>';
+  }
+  return h + '</div>';
+}
+
+/* ---------------- dashboard ---------------- */
+function viewDashboard(){
+  var d = S.dash;
+  if(!d) return loading('Loading your dashboard…');
+  var h = headerHtml('Dashboard', S.cfg.organizationName);
+
+  h += '<div class="tiles">' +
+    tile(n(d.messages30), 'Messages, last 30 days', 'go') +
+    tile(n(d.peopleReached30), 'People reached', 'ok') +
+    tile(d.deliveryRate == null ? '—' : d.deliveryRate + '%', 'Delivery rate') +
+    tile(n(d.replies30), 'Replies received') +
+    tile(n(d.people), 'People', '', 'people') +
+    tile(n(d.groups), 'Groups', '', 'groups') +
+    '</div>';
+
+  if(d.invalidContacts || d.optOuts || d.unreadReplies){
+    h += '<div class="lbl">Needs attention</div><div class="tiles">' +
+      (d.unreadReplies ? tile(n(d.unreadReplies), 'Unread replies', 'go', 'replies') : '') +
+      (d.invalidContacts ? tile(n(d.invalidContacts), 'Invalid contacts', 'warn', 'reports:invalid') : '') +
+      (d.optOuts ? tile(n(d.optOuts), 'Opted out', 'warn', 'reports:optouts') : '') +
+      '</div>';
+  }
+
+  h += '<div class="row-actions"><button class="btn sm" data-act="nav" data-v="compose">' +
+       'Write a message</button>';
+  if(S.cfg.flags.emergency && S.opts.allowEmergency)
+    h += '<button class="btn sm out" data-act="emergencyFromDash">Send an emergency</button>';
+  h += '</div>';
+
+  if(d.scheduled && d.scheduled.length){
+    h += '<div class="lbl">Scheduled</div><div class="list">' + d.scheduled.map(function(m){
+      return '<div class="card" data-act="openMsg" data-id="' + m.id + '"><div class="top"><b>' +
+        esc(m.name) + '</b><time>' + dateOnly(m.scheduled_for || m.created_at) + '</time></div>' +
+        '<div class="meta"><span class="pill warn"><span class="d"></span>Scheduled</span>' +
+        '<span class="pill">' + n(m.reach) + ' recipients</span></div></div>';
+    }).join('') + '</div>';
+  }
+
+  h += '<div class="lbl" style="margin-top:16px">Recent messages</div>';
+  h += d.recent.length ? '<div class="list">' + d.recent.map(msgCard).join('') + '</div>'
+                       : '<div class="empty">Nothing sent yet.</div>';
+
+  if(d.activity && d.activity.length){
+    h += '<div class="lbl" style="margin-top:18px">Activity</div><div class="tbl">';
+    d.activity.forEach(function(a){
+      h += '<div class="r"><span class="c-main">' + esc(a.summary) + '</span>' +
+           '<span class="c-tag" style="color:var(--ink-3);font-size:11.5px">' + when(a.at) + '</span></div>';
+    });
+    h += '</div>';
+  }
+  return h;
+}
+function tile(val, label, cls, navTo){
+  return '<div class="tile ' + (cls || '') + (navTo ? ' click" data-act="tileNav" data-to="' + navTo : '') +
+         '"><b>' + val + '</b><span>' + esc(label) + '</span></div>';
+}
+
+/* ---------------- compose ---------------- */
+function viewCompose(){
+  var f = S.cfg.flags, l = S.cfg.limits, h = '';
+  h += headerHtml(S.emergency ? 'Emergency message' : 'New message', S.cfg.organizationName);
+
+  var over = (S.cfg.overdrawn || {}).voice_sms || 0;
+  if(over && !S.emergency){
+    h += '<div class="note warn"><span class="i">!</span><span>This church is ' + n(over) +
+         ' credits overdrawn after an emergency send. Routine messages are blocked until ' +
+         'credits are topped up; replies and further emergencies still go out.</span></div>';
+  }
+  if(S.emergency){
+    h += '<div class="emgbar"><span>Reaches every phone number on file, ignoring quiet hours.</span>' +
+         '<button data-act="unemergency">Cancel</button></div>';
+  }
+
+  // ---- compose toolbar
+  h += '<div class="row-actions">';
+  if(S.templates.length)
+    h += '<button class="btn sm out" data-act="pickTemplate">Use a template</button>';
+  h += '<button class="btn sm out" data-act="attach">Attach a link</button>' +
+       '<button class="btn sm out" data-act="schedule">' +
+       (S.scheduleAt ? 'Change the time' : 'Schedule') + '</button>' +
+       '<button class="btn sm out" data-act="togglePreview">' +
+       (S.showPreview ? 'Hide preview' : 'Preview') + '</button>';
+  if(S.audience.length === 1 && S.audience[0].kind === 'person' && S.text.trim())
+    h += '<button class="btn sm out" data-act="testSend">Send me a test</button>';
+  h += '</div>';
+  if(S.drafts.length && !S.draftId && !S.text.trim()){
+    h += '<div class="note"><span class="i">i</span><span>You have ' + S.drafts.length +
+      ' saved draft' + (S.drafts.length === 1 ? '' : 's') + '. ' +
+      '<button class="btn ghost" style="padding:0;width:auto;display:inline" ' +
+      'data-act="openDraft" data-id="' + S.drafts[0].id + '">Pick up &ldquo;' +
+      esc(String(S.drafts[0].name).slice(0,42)) + '&rdquo;</button></span></div>';
+  }
+  if(S.draftSavedAt)
+    h += '<div class="note"><span class="i">\u2713</span><span>Draft saved ' +
+      when(S.draftSavedAt) + '. It survives a refresh.</span></div>';
+
+  var people = S.cost ? S.cost.reach : reach();
+  h += '<div class="field"><div class="lbl">To' +
+       (people ? '<span class="hint">' + n(people) + (people === 1 ? ' person' : ' people') + '</span>' : '') +
+       '</div><div class="recips">';
+  S.audience.forEach(function(r, i){
+    h += '<span class="chip' + (r.locked ? ' locked' : '') + '">' + esc(r.name) +
+         (r.kind === 'group' ? '<span class="n">' + n(r.count) + '</span>' : '') +
+         (r.locked ? '' : '<button data-act="unpick" data-i="' + i + '" aria-label="Remove">&times;</button>') +
+         '</span>';
+  });
+  if(!S.opts.lockAudience)
+    h += '<input type="text" id="q" autocomplete="off" placeholder="' +
+         (S.audience.length ? 'Add another…' : 'Search groups or people…') + '" value="' + esc(S.query) + '">';
+  h += '</div><div class="results" id="results">' + resultsHtml() + '</div></div>';
+
+  if(S.opts.allowChannelChange){
+    h += '<div class="field"><div class="lbl">Send by</div><div class="chans">';
+    ['text','email','voice'].forEach(function(c){
+      var on = S.channels.indexOf(c) > -1, en = f[c] !== false;
+      h += '<span class="chan' + (on ? ' on' : '') + (en ? '' : ' off') + '"' +
+           (en ? ' data-act="chan" data-k="' + c + '" role="checkbox" tabindex="0" aria-checked="' + on + '"'
+               : ' title="Not enabled for this church"') +
+           '><i class="dot"></i>' + CH[c] + '</span>';
+    });
+    h += '</div></div>';
+  }
+
+  h += '<div class="field"><div class="lbl" id="msgLbl">' + msgLabel() + '</div>' +
+       '<textarea id="msg" placeholder="Write your message…" maxlength="' + (l.tts + 50) + '">' +
+       esc(S.text) + '</textarea><div id="meterWrap">' + meterHtml() + '</div></div>';
+  // ---- attachments
+  if(S.attachments.length){
+    h += '<div class="field"><div class="lbl">Attachments</div><div class="row-actions">' +
+      S.attachments.map(function(a, i){
+        return '<span class="chip">' + esc(a.name) +
+          '<button data-act="unattach" data-i="' + i + '" aria-label="Remove">&times;</button></span>';
+      }).join('') + '</div></div>';
+  }
+
+  // ---- schedule
+  if(S.scheduleAt){
+    h += '<div class="field"><div class="lbl">Scheduled</div>' +
+      '<div class="note warn"><span class="i">!</span><span>Will send on <b>' +
+      esc(new Date(S.scheduleAt).toLocaleString([], {dateStyle:'full', timeStyle:'short'})) +
+      '</b>. <button class="btn ghost" style="padding:0;width:auto;display:inline" ' +
+      'data-act="unschedule">Send immediately instead</button></span></div></div>';
+  }
+
+  // ---- preview of what each person actually receives
+  if(S.showPreview && S.preview){
+    h += '<div class="field"><div class="lbl">Preview <span class="hint">' +
+      (S.preview.mergeFields.length ? 'personalised per person' : 'the same for everyone') +
+      '</span></div>';
+    if(!S.preview.samples.length)
+      h += '<div class="empty" style="padding:18px">Pick recipients to preview.</div>';
+    else h += S.preview.samples.map(function(x){
+      return '<div class="quote" style="margin-bottom:8px"><b style="font-size:12px;' +
+        'color:var(--ink-2)">' + esc(x.name) + '</b><br>' + esc(x.body) +
+        '<br><span style="font-size:11px;color:var(--ink-3)">' + x.length + ' characters</span></div>';
+    }).join('');
+    h += '</div>';
+  }
+
+  h += '<div id="tail">' + tailHtml() + '</div>';
+  return h;
+}
+function msgLabel(){
+  if(!S.text.length) return 'Message';
+  var per = S.cost ? S.cost.perRecipient : 0;
+  return 'Message' + (per ? '<span class="hint">' + per + ' credit' + (per === 1 ? '' : 's') + ' each</span>' : '');
+}
+function meterHtml(){
+  var l = S.cfg.limits, limit = S.channels.indexOf('text') > -1 ? l.sms : l.tts, len = S.text.length;
+  return '<div class="meter' + (len > limit ? ' over' : len > limit * 0.85 ? ' warn' : '') +
+    '"><div class="bar"><i style="width:' + Math.min(100, (len / limit) * 100) + '%"></i></div>' +
+    '<span>' + len + ' / ' + limit + '</span></div>';
+}
+function tailHtml(){
+  var f = S.cfg.flags, l = S.cfg.limits, len = S.text.length, c = S.cost, h = '';
+  if(c && c.reach && len){
+    h += '<div class="summary"><div class="row"><span>Reaching</span><b>' + n(c.reach) + ' people</b></div>';
+    if(c.credits.voice_sms) h += '<div class="row"><span>Voice &amp; text credits</span><b>' + n(c.credits.voice_sms) + '</b></div>';
+    if(c.credits.email) h += '<div class="row"><span>Email credits</span><b>' + n(c.credits.email) + '</b></div>';
+    h += '<div class="row total"><span>Total</span><b>' + n(c.credits.voice_sms + c.credits.email) + ' credits</b></div></div>';
+  }
+  h += '<button class="btn' + (S.emergency ? ' emg' : '') + '" data-act="send"' +
+       (canSend() ? '' : ' disabled') + '>' +
+       (S.sending ? 'Sending…' : S.emergency ? 'Send emergency message'
+         : S.scheduleAt ? 'Schedule this message' : 'Send') + '</button>';
+  var sf = shortfall();
+  if(sf > 0)
+    h += '<div class="note ' + (S.emergency ? 'warn' : 'danger') + '"><span class="i">!</span><span>Short by ' +
+      n(sf) + ' credits. ' + (S.emergency ? 'Emergency messages still send; the overage is billed afterwards.'
+        : 'Buy more credits or reduce the audience to send this.') + '</span></div>';
+  if(S.channels.indexOf('text') > -1 && len > l.sms)
+    h += '<div class="note danger"><span class="i">!</span><span>Text messages stop at ' + l.sms +
+      ' characters. Shorten it or drop the text channel.</span></div>';
+  if(S.channels.indexOf('voice') > -1 && len > l.ttsWarning && len <= l.tts)
+    h += '<div class="note warn"><span class="i">!</span><span>Close to the ' + l.tts +
+      '-character read-aloud limit; long calls get cut at two minutes.</span></div>';
+  if(!f.twoWay)
+    h += '<div class="note"><span class="i">i</span><span>Replies are not enabled for this church, ' +
+      'so recipients cannot write back.</span></div>';
+  if(S.opts.allowEmergency && f.emergency && !S.emergency)
+    h += '<button class="btn ghost" data-act="emergency">Send as an emergency instead</button>';
+  return h;
+}
+function resultsHtml(){
+  if(S.opts.lockAudience || !S.query.trim()) return '';
+  var picked = {};
+  S.audience.forEach(function(r){ picked[r.kind + r.id] = 1; });
+  var q = S.query.trim().toLowerCase();
+  var gs = S.groups.filter(function(g){ return !picked['group' + g.id] && g.name.toLowerCase().indexOf(q) > -1; });
+  var ps = (S.qResults || []).filter(function(p){ return !picked['person' + p.id]; });
+  var rows = gs.map(function(g){ return {kind:'group', o:g}; })
+           .concat(ps.map(function(p){ return {kind:'person', o:p}; }));
+  if(!rows.length) return '<div class="res-empty">Nothing matches &ldquo;' + esc(S.query) + '&rdquo;</div>';
+  return rows.slice(0,8).map(function(r, i){
+    var sub = r.kind === 'group' ? (r.o.type || 'Group') : (r.o.detail || 'Person');
+    return '<div class="res' + (i === S.highlight ? ' on' : '') + '" data-act="pick" data-kind="' +
+      r.kind + '" data-id="' + esc(r.o.id) + '"><span class="ico' + (r.kind === 'person' ? ' person' : '') +
+      '">' + (r.kind === 'group' ? '◉' : esc(initials(r.o.name))) + '</span>' +
+      '<span class="t"><b>' + esc(r.o.name) + '</b><span>' + esc(sub) + '</span></span>' +
+      (r.kind === 'group' ? '<span class="cnt">' + n(r.o.count) + '</span>' : '') + '</div>';
+  }).join('');
+}
+
+/* ---------------- sent ---------------- */
+function msgCard(m){
+  var out = '';
+  if(m.undone) out += '<span class="pill">Pulled back</span>';
+  else if(m.status === 'scheduled') out += '<span class="pill warn"><span class="d"></span>Scheduled</span>';
+  else if(m.status === 'sending') out += '<span class="pill go"><span class="spin"></span>Sending</span>';
+  else out += '<span class="pill ok"><span class="d"></span>Sent</span>';
+  if(m.emergency) out += '<span class="pill bad"><span class="d"></span>Emergency</span>';
+  out += '<span class="pill">' + n(m.reach) + ' recipients</span>';
+  (m.channels || []).forEach(function(c){ out += '<span class="pill">' + CH[c] + '</span>'; });
+  if(m.replies) out += '<span class="pill go">' + m.replies + ' repl' + (m.replies === 1 ? 'y' : 'ies') + '</span>';
+  return '<div class="card" data-act="openMsg" data-id="' + m.id + '">' +
+    '<div class="top"><b>' + esc(m.name) + '</b><time>' + when(m.created_at) + '</time></div>' +
+    '<div class="prev">' + esc(m.body) + '</div><div class="meta">' + out + '</div></div>';
+}
+function viewSent(){
+  var h = headerHtml('Sent', n(S.messages.length) + ' message' + (S.messages.length === 1 ? '' : 's'));
+  if(S.drafts.length){
+    h += '<div class="lbl">Drafts <span class="hint">not sent</span></div><div class="list">' +
+      S.drafts.map(function(dr){
+        return '<div class="card flat"><div class="top"><b>' + esc(dr.name) + '</b><time>' +
+          when(dr.created_at) + '</time></div><div class="prev">' + esc(dr.body) + '</div>' +
+          '<div class="meta"><span class="pill warn">Draft</span>' +
+          '<button class="btn sm" data-act="openDraft" data-id="' + dr.id + '">Open</button>' +
+          '<button class="btn sm out" data-act="deleteDraft" data-id="' + dr.id +
+          '">Discard</button></div></div>';
+      }).join('') + '</div><div class="lbl" style="margin-top:16px">Sent</div>';
+  }
+  if(!S.messages.length)
+    return h + '<div class="empty"><b>Nothing sent yet</b>Messages you send appear here with live delivery status.</div>' + undoHtml();
+  return h + '<div class="list">' + S.messages.map(msgCard).join('') + '</div>' + undoHtml();
+}
+function viewMessage(){
+  var m = S.openMessage, h = '';
+  h += '<button class="back" data-act="closeMsg">&larr; Sent</button>';
+  h += headerHtml(m.name, new Date(m.created_at).toLocaleString([], {dateStyle:'medium', timeStyle:'short'}), false);
+  h += '<div class="quote">' + esc(m.body) + '</div>';
+  // Distinct PEOPLE, from the server. Counting delivery rows double-counts
+  // anyone on two channels and reads as "329 reached of 176".
+  h += '<div class="tiles">' +
+    tile(n(m.reach), 'Recipients') +
+    tile(n(m.reachedPeople), 'Reached', 'ok') +
+    tile(n(m.notReachedPeople), 'Not reached', 'bad') +
+    (m.pendingPeople ? tile(n(m.pendingPeople), 'In flight', 'go') : '') +
+    tile(n(m.replies), 'Replies') +
+    tile(n(m.credits.total), 'Credits') + '</div>';
+
+  h += '<div class="row-actions">';
+  if(m.status === 'scheduled'){
+    h += '<button class="btn sm" data-act="sendNow" data-id="' + m.id + '">Send now</button>' +
+         '<button class="btn sm out" data-act="cancelScheduled" data-id="' + m.id +
+         '">Cancel send</button>';
+  }
+  h += '<a class="btn sm out" style="text-decoration:none;display:inline-block" ' +
+       'href="' + API.base + '/messages/' + m.id + '/recipients.csv" download>' +
+       'Export recipients (CSV)</a></div>';
+  if(m.attachments && m.attachments.length){
+    h += '<div class="lbl">Attachments</div><div class="row-actions">' +
+      m.attachments.map(function(a){
+        return '<a class="btn sm out" style="text-decoration:none;display:inline-block" href="' +
+          esc(a.url) + '" target="_blank" rel="noopener noreferrer">' + esc(a.name) + '</a>';
+      }).join('') + '</div>';
+  }
+  if(m.mergeFields && m.mergeFields.length)
+    h += '<div class="note"><span class="i">i</span><span>Personalised with ' +
+      m.mergeFields.map(function(x){ return '<code>{{' + x + '}}</code>'; }).join(', ') +
+      ' \u2014 each person received their own name.</span></div>';
+
+  h += '<div class="lbl">Delivery by channel</div><div class="tbl"><div class="h">' +
+       '<span class="c-main">Channel</span><span class="c-tag">Status</span><span class="c-num">Count</span></div>';
+  Object.keys(m.delivery || {}).forEach(function(ch){
+    var sts = m.delivery[ch];
+    Object.keys(sts).forEach(function(st, i){
+      h += '<div class="r"><span class="c-main">' + (i === 0 ? CH[ch] : '') + '</span>' +
+           '<span class="c-tag"><span class="pill ' + (STC[st] || '') + '">' + (ST[st] || st) + '</span></span>' +
+           '<span class="c-num">' + n(sts[st]) + '</span></div>';
+    });
+  });
+  h += '</div>';
+
+  if(m.replyList && m.replyList.length){
+    h += '<div class="lbl" style="margin-top:16px">Replies to this message</div><div class="list">' +
+      m.replyList.map(function(r){
+        return '<div class="card" data-act="openThreadId" data-id="' + r.thread_id + '">' +
+          '<div class="trow"><span class="avatar">' + esc(initials(r.name)) + '</span>' +
+          '<span style="flex:1;min-width:0"><div class="top"><b>' + esc(r.name) + '</b><time>' +
+          when(r.created_at) + '</time></div><div class="prev">' + esc(r.body) + '</div></span></div></div>';
+      }).join('') + '</div>';
+  }
+  if(m.recipients && m.recipients.length){
+    var show = m.recipients.slice(0,40);
+    h += '<div class="lbl" style="margin-top:16px">Recipients <span class="hint">showing ' +
+      show.length + ' of ' + n(m.recipients.length) + '</span></div><div class="tbl">';
+    show.forEach(function(r){
+      h += '<div class="r click" data-act="openPerson" data-id="' + r.person_id + '">' +
+        '<span class="c-main">' + esc(r.name) + '</span>' +
+        '<span class="c-sub">' + CH[r.channel] + '</span>' +
+        '<span class="c-tag"><span class="pill ' + (STC[r.status] || '') + '">' + (ST[r.status] || r.status) +
+        '</span></span></div>';
+    });
+    h += '</div>';
+  }
+  return h;
+}
+
+/* ---------------- replies ---------------- */
+var INBOX_TABS = [
+  {k:'open',   label:'Open'},
+  {k:'unread', label:'Unread'},
+  {k:'review', label:'Needs review'},
+  {k:'done',   label:'Done'}
+];
+
+function viewReplies(){
+  var c = S.inboxCounts || {};
+  var h = headerHtml('Inbox', (c.open || 0) + ' open' +
+    (c.unassigned ? ' \u00b7 ' + c.unassigned + ' unassigned' : ''));
+
+  h += '<div class="tabs">' + INBOX_TABS.map(function(t){
+    var cnt = c[t.k];
+    return '<button class="tab' + (S.inboxState === t.k ? ' on' : '') +
+      (t.k === 'review' && cnt ? ' warn' : '') + '" data-act="inboxTab" data-k="' + t.k + '">' +
+      t.label + (cnt ? ' <i>' + n(cnt) + '</i>' : '') + '</button>';
+  }).join('') + '</div>';
+
+  h += '<div class="field" style="margin:8px 0"><input type="text" id="inboxQ" ' +
+       'placeholder="Search name, number or message text" value="' + esc(S.inboxQ) + '"></div>';
+
+  if(S.inboxState === 'review')
+    h += '<div class="note warn"><span class="i">!</span><span>These replies look like ' +
+      'someone asking to stop, but they did not use a keyword the carrier acts on. ' +
+      '<b>Somebody has to decide.</b> Opting them out here is the same as if they had ' +
+      'texted STOP.</span></div>';
+
+  if(!S.threads.length)
+    return h + '<div class="empty"><b>Nothing here</b>' +
+      (S.inboxQ ? 'No conversation matches that search.'
+       : S.inboxState === 'done' ? 'Conversations you mark done land here.'
+       : S.inboxState === 'review' ? 'No replies are waiting on a judgement call.'
+       : 'When someone answers a message, their reply opens a conversation here.') +
+      '</div>';
+
+  return h + '<div class="list">' + S.threads.map(function(t){
+    return '<div class="card" data-act="openThread" data-id="' + t.id + '"><div class="trow">' +
+      '<span class="avatar">' + esc(initials(t.name)) + '</span><span style="flex:1;min-width:0">' +
+      '<div class="top"><b>' + esc(t.name) + '</b><time>' + when(t.last_at) + '</time></div>' +
+      '<div class="prev">' + (t.preview_direction === 'out' ? 'You: ' : '') + esc(t.preview) + '</div>' +
+      '<div class="meta">' +
+        (t.needs_review ? '<span class="pill warn">Possible opt-out</span>' : '') +
+        (t.opted_out ? '<span class="pill">Opted out</span>' : '') +
+        // Only keyword (4) and help (5) earn a label. 1 and 2 are already told by
+        // the opted_out pill, 3 is an ordinary reply and 0 says nothing.
+        (t.reply_type >= 4 ? '<span class="pill">' + esc(t.reply_label) + '</span>' : '') +
+        // Assignee only when there is one. An "Unassigned" pill on every row is
+        // noise when the header already counts them.
+        (t.assignee ? '<span class="pill go">' + esc(t.assignee) + '</span>' : '') +
+        (t.state === 'done' ? '<span class="pill ok">Done</span>' : '') +
+      '</div></span>' +
+      (t.unread ? '<span class="unread"></span>' : '') + '</div></div>';
+  }).join('') + '</div>';
+}
+function viewThread(){
+  var t = S.openThread, h = '';
+  h += '<button class="back" data-act="closeThread">&larr; Replies</button>';
+  h += '<div class="hdr"><span class="avatar" style="margin-right:4px">' + esc(initials(t.name)) +
+       '</span><h1>' + esc(t.name) + '<span class="org">' + esc(t.detail || 'Member') + '</span></h1>' +
+       '<button class="btn sm out" data-act="openPerson" data-id="' + t.person_id + '">View profile</button></div>';
+  h += '<div class="privnote">Only you and ' + esc(String(t.name).split(' ')[0]) + ' can see this conversation.</div>';
+
+  // Assignment + done, the two things that make an inbox usable by more than
+  // one person. Both act immediately; neither is hidden behind a menu.
+  h += '<div class="row-actions" style="align-items:center">' +
+    '<select id="assignTo" data-act="assignThread" data-id="' + t.id + '">' +
+    '<option value="">Unassigned</option>' +
+    S.staff.map(function(st){
+      return '<option value="' + st.id + '"' +
+        (String(t.assigned_to) === String(st.id) ? ' selected' : '') + '>' +
+        esc(st.name) + '</option>';
+    }).join('') + '</select>' +
+    '<button class="btn sm out" data-act="threadState" data-id="' + t.id + '" data-state="' +
+      (t.state === 'done' ? 'open' : 'done') + '">' +
+      (t.state === 'done' ? 'Reopen' : 'Mark done') + '</button>' +
+    (t.opted_out ? '<span class="pill">Opted out of text</span>' : '') +
+    '</div>';
+
+  if(t.needs_review)
+    h += '<div class="note warn"><span class="i">!</span><span>This reads like a request to ' +
+      'stop, but it is not a keyword the carrier acts on, so nobody has been opted out yet.' +
+      '</span><button class="btn sm" data-act="reviewThread" data-id="' + t.id +
+      '" data-action="optout">Opt them out</button>' +
+      '<button class="btn sm out" data-act="reviewThread" data-id="' + t.id +
+      '" data-action="dismiss">Not an opt-out</button></div>';
+  h += '<div class="conv">' + (t.messages || []).map(function(m){
+    var tag = '';
+    if(m.direction === 'in' && m.alert_name) tag = ' \u00b7 re: ' + esc(m.alert_name);
+    else if(m.direction === 'out' && m.staff_name) tag = ' \u00b7 ' + esc(m.staff_name);
+    return '<div class="bub ' + (m.direction === 'in' ? 'in' : 'out') + '">' + esc(m.body) +
+      '<span class="when">' + (m.direction === 'in' ? CH[m.channel] + ' \u00b7 ' : 'Private reply \u00b7 ') +
+      when(m.created_at) + tag + '</span></div>';
+  }).join('') + '</div>';
+  h += '<div class="replybox"><textarea id="reply" rows="1" placeholder="Reply by text…" maxlength="' +
+       S.cfg.limits.sms + '">' + esc(S.replyText) + '</textarea><button data-act="sendReply"' +
+       (S.replyText.trim() && !S.replying ? '' : ' disabled') + ' aria-label="Send reply">&#10148;</button></div>';
+  return h;
+}
+
+/* ---------------- people ---------------- */
+function viewPeople(){
+  var p = S.people, h = headerHtml('People', n(p.total) + ' in the directory');
+  h += '<div class="row-actions">' +
+    '<button class="btn sm" data-act="addPerson">Add a person</button>' +
+    '<button class="btn sm out' + (S.peopleFilter === 'invalid' ? ' on' : '') + '" data-act="peopleFilter" data-f="invalid">Invalid contacts</button>' +
+    '<button class="btn sm out" data-act="peopleFilter" data-f="optout">Opted out</button>' +
+    (S.peopleFilter || S.peopleGroup || S.peopleQ ? '<button class="btn sm out" data-act="peopleFilter" data-f="">Clear filters</button>' : '') +
+    '</div>';
+  h += '<div class="field"><input type="search" id="psearch" placeholder="Search by name, email or number…" value="' +
+       esc(S.peopleQ) + '"></div>';
+  if(S.peopleFilter || S.peopleGroup){
+    var lab = S.peopleFilter === 'invalid' ? 'Invalid contacts only'
+      : S.peopleFilter === 'optout' ? 'Opted out only'
+      : 'In one group';
+    h += '<div class="note"><span class="i">i</span><span>Filtered: ' + lab + '</span></div>';
+  }
+  if(!p.rows.length) return h + '<div class="empty"><b>Nobody matches</b>Try a different search or clear the filters.</div>';
+
+  h += '<div class="tbl"><div class="h"><span class="c-main">Name</span>' +
+       '<span class="c-sub">Contact</span><span class="c-tag">Status</span></div>';
+  p.rows.forEach(function(r){
+    var tags = '';
+    if(!r.phone_valid) tags += '<span class="pill warn">Bad number</span> ';
+    if(!r.email_valid) tags += '<span class="pill warn">Bad email</span> ';
+    var oo = Object.keys(r.opted_out).filter(function(k){ return r.opted_out[k]; });
+    if(oo.length) tags += '<span class="pill">Opted out</span>';
+    h += '<div class="r click" data-act="openPerson" data-id="' + r.id + '">' +
+      '<span class="c-main">' + esc(r.name) + '</span>' +
+      '<span class="c-sub">' + esc(r.phone || r.email || '—') + '</span>' +
+      '<span class="c-tag">' + (tags || '<span class="pill ok">OK</span>') + '</span></div>';
+  });
+  h += '</div>';
+  h += '<div class="pager"><button data-act="pPage" data-p="' + (p.page - 1) + '"' +
+    (p.page <= 1 ? ' disabled' : '') + '>Previous</button><span>Page ' + p.page + ' of ' + p.pages +
+    '</span><button data-act="pPage" data-p="' + (p.page + 1) + '"' +
+    (p.page >= p.pages ? ' disabled' : '') + '>Next</button></div>';
+  return h;
+}
+function viewPerson(){
+  var p = S.openPerson, h = '';
+  h += '<button class="back" data-act="closePerson">&larr; People</button>';
+  h += '<div class="hdr"><span class="avatar" style="margin-right:4px">' + esc(initials(p.name)) +
+       '</span><h1>' + esc(p.name) + '<span class="org">' + esc(p.detail || 'Member') + '</span></h1></div>';
+
+  h += '<div class="row-actions">' +
+    '<button class="btn sm" data-act="messagePerson" data-id="' + p.id + '" data-name="' + esc(p.name) + '">Message</button>' +
+    (p.thread_id ? '<button class="btn sm out" data-act="openThread" data-id="' + p.thread_id + '">Open conversation</button>' : '') +
+    '<button class="btn sm out" data-act="editPerson">Edit</button>' +
+    '<button class="btn sm out" data-act="archivePerson">' + (p.archived ? 'Restore' : 'Archive') + '</button>' +
+    '</div>';
+
+  h += '<div class="tbl"><div class="h"><span class="c-main">Detail</span><span class="c-tag">Value</span></div>';
+  h += row2('Mobile', (p.phone || '—') + (p.phone && !p.phone_valid ? ' <span class="pill warn">Invalid</span>' : ''));
+  h += row2('Email', (p.email || '—') + (p.email && !p.email_valid ? ' <span class="pill warn">Invalid</span>' : ''));
+  h += row2('Added', dateOnly(p.created_at));
+  h += row2('Last seen', p.last_seen ? dateOnly(p.last_seen) : 'Never signed in');
+  h += '</div>';
+
+  h += '<div class="lbl" style="margin-top:16px">Receives</div><div class="chans">';
+  [['text','Text'],['email','Email'],['voice','Phone call']].forEach(function(c){
+    var out = p.opted_out[c[0]];
+    h += '<span class="chan' + (out ? '' : ' on') + '" data-act="toggleOptOut" data-c="' + c[0] +
+         '" role="checkbox" tabindex="0" aria-checked="' + (!out) + '"><i class="dot"></i>' + c[1] + '</span>';
+  });
+  h += '</div><div class="note"><span class="i">i</span><span>Turning one off records an opt-out; ' +
+       'the service then suppresses that channel for this person instead of failing silently.</span></div>';
+
+  if(p.groups && p.groups.length){
+    h += '<div class="lbl" style="margin-top:16px">Groups</div><div class="row-actions">' +
+      p.groups.map(function(g){
+        return '<button class="btn sm out" data-act="openGroup" data-id="' + g.id + '">' + esc(g.name) + '</button>';
+      }).join('') + '</div>';
+  }
+
+  h += '<div class="lbl" style="margin-top:16px">Message history <span class="hint">' +
+       (p.history || []).length + ' deliveries</span></div>';
+  if(!(p.history || []).length) h += '<div class="empty">No messages sent to this person yet.</div>';
+  else {
+    h += '<div class="tbl"><div class="h"><span class="c-main">Message</span>' +
+         '<span class="c-sub">Channel</span><span class="c-tag">Status</span></div>';
+    p.history.forEach(function(x){
+      h += '<div class="r click" data-act="openMsg" data-id="' + x.id + '">' +
+        '<span class="c-main">' + esc(x.name) + '<br><span style="font-weight:400;color:var(--ink-3);font-size:11.5px">' +
+        dateOnly(x.created_at) + '</span></span>' +
+        '<span class="c-sub">' + CH[x.channel] + '</span>' +
+        '<span class="c-tag"><span class="pill ' + (STC[x.status] || '') + '">' + (ST[x.status] || x.status) +
+        '</span></span></div>';
+    });
+    h += '</div>';
+  }
+  return h;
+}
+function row2(k, v){
+  return '<div class="r"><span class="c-main" style="font-weight:400;color:var(--ink-2)">' + esc(k) +
+         '</span><span class="c-tag" style="width:auto;flex:1;text-align:right">' + v + '</span></div>';
+}
+
+/* ---------------- groups ---------------- */
+function viewGroups(){
+  var h = headerHtml('Groups', n(S.groups.length) + ' group' + (S.groups.length === 1 ? '' : 's'));
+  h += '<div class="row-actions"><button class="btn sm" data-act="addGroup">Create a group</button></div>';
+  if(!S.groups.length) return h + '<div class="empty"><b>No groups yet</b>Groups are how you choose who a message goes to.</div>';
+  h += '<div class="tbl"><div class="h"><span class="c-main">Group</span>' +
+       '<span class="c-sub">Type</span><span class="c-num">People</span></div>';
+  S.groups.forEach(function(g){
+    h += '<div class="r click" data-act="openGroup" data-id="' + g.id + '">' +
+      '<span class="c-main">' + esc(g.name) + '</span>' +
+      '<span class="c-sub">' + esc(g.type || '') + '</span>' +
+      '<span class="c-num">' + n(g.count) + '</span></div>';
+  });
+  return h + '</div>';
+}
+function viewGroup(){
+  var g = S.openGroup, h = '';
+  h += '<button class="back" data-act="closeGroup">&larr; Groups</button>';
+  h += headerHtml(g.name, (g.type || 'Group') + ' · ' + n(g.count) + ' people', false);
+  h += '<div class="row-actions">' +
+    '<button class="btn sm" data-act="messageGroup" data-id="' + g.id + '" data-name="' + esc(g.name) +
+    '" data-count="' + g.count + '">Message this group</button>' +
+    '<button class="btn sm out" data-act="peopleInGroup" data-id="' + g.id + '">Browse in People</button>' +
+    '<button class="btn sm out" data-act="renameGroup">Rename</button>' +
+    '<button class="btn sm out" data-act="deleteGroup">Delete</button></div>';
+  if(!g.members.length) return h + '<div class="empty"><b>No members</b>Add people from the People section.</div>';
+  h += '<div class="lbl">Members <span class="hint">showing ' + n(g.shown != null ? g.shown : g.members.length) + ' of ' + n(g.count) + '</span></div>';
+  h += '<div class="tbl"><div class="h"><span class="c-main">Name</span>' +
+       '<span class="c-sub">Contact</span><span class="c-tag"></span></div>';
+  g.members.forEach(function(m){
+    h += '<div class="r"><span class="c-main click" data-act="openPerson" data-id="' + m.id + '">' +
+      esc(m.name) + '</span><span class="c-sub">' + esc(m.phone || m.email || '—') + '</span>' +
+      '<span class="c-tag"><button class="btn sm out" data-act="removeMember" data-id="' + m.id +
+      '">Remove</button></span></div>';
+  });
+  return h + '</div>';
+}
+
+/* ---------------- templates ---------------- */
+function viewTemplates(){
+  var h = headerHtml('Templates', n(S.templates.length) + ' saved', false);
+  h += '<div class="row-actions"><button class="btn sm" data-act="addTemplate">' +
+       'New template</button></div>';
+  if(!S.templates.length)
+    return h + '<div class="empty"><b>No templates yet</b>Save the messages you send ' +
+      'often. For someone who sends twice a month, a template is the memory.</div>';
+
+  h += '<div class="note"><span class="i">i</span><span>Use ' +
+    S.mergeFields.map(function(f){ return '<code>{{' + f + '}}</code>'; }).join(', ') +
+    ' and each person gets their own name. Anything else is rejected rather than ' +
+    'sent out blank.</span></div>';
+
+  var byCat = {};
+  S.templates.forEach(function(t){ (byCat[t.category || 'Uncategorised'] =
+    byCat[t.category || 'Uncategorised'] || []).push(t); });
+  Object.keys(byCat).sort().forEach(function(cat){
+    h += '<div class="lbl" style="margin-top:14px">' + esc(cat) + '</div><div class="list">';
+    byCat[cat].forEach(function(t){
+      h += '<div class="card flat"><div class="top"><b>' + esc(t.name) + '</b>' +
+        '<time>' + (t.used_count ? 'used ' + t.used_count + '\u00D7' : 'never used') + '</time></div>' +
+        '<div class="prev">' + esc(t.body) + '</div><div class="meta">' +
+        t.channels.map(function(c){ return '<span class="pill">' + CH[c] + '</span>'; }).join('') +
+        (t.mergeFields.length ? '<span class="pill go">personalised</span>' : '') +
+        '<button class="btn sm" data-act="useTemplate" data-id="' + t.id + '">Use</button>' +
+        '<button class="btn sm out" data-act="editTemplate" data-id="' + t.id + '">Edit</button>' +
+        '<button class="btn sm out" data-act="deleteTemplate" data-id="' + t.id +
+        '" data-name="' + esc(t.name) + '">Delete</button>' +
+        '</div></div>';
+    });
+    h += '</div>';
+  });
+  return h;
+}
+
+/* ---------------- keywords & workflows ---------------- */
+function viewKeywords(){
+  var h = headerHtml('Keywords', n(S.keywords.length) + ' set up', false);
+  h += '<div class="note"><span class="i">i</span><span>A keyword is how people ' +
+    '<b>join by themselves</b>. Put <code>Text JOIN to ' +
+    esc((S.cfg.settings && S.cfg.settings.callerId) || 'your number') + '</code> on a screen ' +
+    'or a card; texting it opts them in, adds them to a list and starts a follow-up ' +
+    'sequence. It is the one thing that grows a list without anyone typing names in.</span></div>';
+  h += '<div class="row-actions"><button class="btn sm" data-act="addKeyword">' +
+       'New keyword</button></div>';
+
+  if(!S.keywords.length)
+    return h + '<div class="empty"><b>No keywords yet</b>Without one, you can only ' +
+      'message people someone has already entered by hand.</div>';
+
+  h += '<div class="list">' + S.keywords.map(function(k){
+    return '<div class="card flat"><div class="top"><b>' + esc(k.word) + '</b><time>' +
+      (k.uses ? n(k.uses) + ' uses' : 'never used') + '</time></div>' +
+      '<div class="prev">' + esc(k.reply) + '</div>' +
+      '<div class="meta">' +
+        '<span class="pill ' + (k.active ? 'ok' : '') + '">' + (k.active ? 'Active' : 'Paused') + '</span>' +
+        (k.group_name ? '<span class="pill go">adds to ' + esc(k.group_name) + '</span>'
+                      : '<span class="pill">no list</span>') +
+        (k.steps.length ? '<span class="pill go">' + k.steps.length + '-step follow-up</span>' : '') +
+        (k.running ? '<span class="pill warn">' + n(k.running) + ' mid-sequence</span>' : '') +
+        '<button class="btn sm out" data-act="simKeyword" data-w="' + esc(k.word) +
+        '">Try it</button>' +
+        '<button class="btn sm out" data-act="toggleKeyword" data-id="' + k.id +
+        '" data-on="' + (k.active ? '1' : '0') + '">' + (k.active ? 'Pause' : 'Resume') + '</button>' +
+        '<button class="btn sm out" data-act="deleteKeyword" data-id="' + k.id +
+        '" data-w="' + esc(k.word) + '">Delete</button>' +
+      '</div>' +
+      (k.steps.length ? '<div class="tbl" style="margin-top:4px">' + k.steps.map(function(st){
+        return '<div class="r"><span class="c-sub" style="flex:none;width:92px">' +
+          (st.delay_minutes ? 'after ' + humanDelay(st.delay_minutes) : 'immediately') +
+          '</span><span class="c-main" style="font-weight:400">' + esc(st.body) + '</span></div>';
+      }).join('') + '</div>' : '') +
+      '</div>';
+  }).join('') + '</div>';
+  return h;
+}
+function humanDelay(mins){
+  if(mins < 60) return mins + ' min';
+  if(mins < 1440) return Math.round(mins / 60) + ' hr';
+  return Math.round(mins / 1440) + ' days';
+}
+
+/* ---------------- polls ---------------- */
+function viewPolls(){
+  var h = headerHtml('Polls', n(S.polls.length) + ' run', false);
+  h += '<div class="note"><span class="i">i</span><span>A poll goes out as a numbered ' +
+    'list; people reply with a number and the tally updates as answers arrive. No app, ' +
+    'no link to click.</span></div>';
+  h += '<div class="row-actions"><button class="btn sm" data-act="addPoll">New poll</button></div>';
+  if(!S.polls.length)
+    return h + '<div class="empty"><b>No polls yet</b>Ask a question and let people ' +
+      'answer by text.</div>';
+
+  h += S.polls.map(function(pl){
+    var hh = '<div class="card flat" style="margin-bottom:10px">' +
+      '<div class="top"><b>' + esc(pl.question) + '</b><time>' + when(pl.created_at) + '</time></div>' +
+      '<div class="meta"><span class="pill ' + (pl.closed ? '' : 'ok') + '">' +
+      (pl.closed ? 'Closed' : 'Open') + '</span>' +
+      '<span class="pill">' + n(pl.responses) + ' of ' + n(pl.sent_to) + ' replied</span>' +
+      '<span class="pill">' +
+        (pl.sent_to ? Math.round(pl.responses / pl.sent_to * 100) : 0) + '% response</span>' +
+      '<button class="btn sm out" data-act="openMsg" data-id="' + pl.message_id +
+      '">See the send</button>' +
+      (pl.closed ? '' : '<button class="btn sm out" data-act="closePoll" data-id="' + pl.id +
+        '">Close</button>') +
+      '</div><div class="hbars" style="margin-top:8px">';
+    var top = Math.max.apply(null, pl.tally.map(function(t){ return t.count; })) || 1;
+    pl.tally.forEach(function(t){
+      hh += '<div class="hbar"><span class="nm">' + t.n + '. ' + esc(t.option) + '</span>' +
+        '<span class="track"><i style="width:' + (t.count / top * 100) + '%"></i></span>' +
+        '<span class="val">' + n(t.count) + ' &middot; ' + t.pct + '%</span></div>';
+    });
+    return hh + '</div></div>';
+  }).join('');
+  return h;
+}
+
+/* ---------------- API & health ---------------- */
+var DOT = {up:'ok', degraded:'warn', down:'bad'};
+var DOT_WORD = {up:'Operational', degraded:'Degraded', down:'Down'};
+
+function healthRow(r){
+  return '<div class="r health"><span class="c-main"><b>' + esc(r.name) + '</b>' +
+    (r.used_for ? '<span class="c-sub" style="display:block;font-weight:400">' +
+      esc(r.used_for) + '</span>' : '') +
+    '</span>' +
+    '<span class="c-sub" style="flex:none;width:92px;text-align:right">' +
+      (r.ms === null || r.ms === undefined ? '' : n(r.ms) + 'ms') + '</span>' +
+    '<span style="flex:none;width:118px;text-align:right">' +
+      '<span class="pill ' + (DOT[r.state] || '') + '">' +
+      esc(DOT_WORD[r.state] || r.state) + '</span></span>' +
+    '<span class="c-sub" style="flex:1 1 150px;text-align:right;min-width:0">' +
+      esc(r.detail || '') + '</span></div>';
+}
+
+function viewApi(){
+  var h = S.health, g = S.integration;
+  if(!h || !g) return headerHtml('API', 'Checking', false) + loading('Reading status…');
+
+  var head = headerHtml('API', DOT_WORD[h.overall] || h.overall, false);
+
+  head += '<div class="note"><span class="i">i</span><span>This panel is for whoever ' +
+    'integrates the module, not for church staff. Gate it to an integrator role before ' +
+    'release, or exclude it with <code>views</code>.</span></div>';
+
+  // ---- our own moving parts
+  head += '<div class="lbl">This service</div><div class="tbl">' +
+    h.internal.map(healthRow).join('') + '</div>';
+
+  // ---- upstream dependencies
+  head += '<div class="lbl" style="margin-top:18px">Upstream dependencies' +
+    '<span class="hint">' + (h.dependenciesCheckedAt
+      ? 'checked ' + when(h.dependenciesCheckedAt)
+      : 'not checked yet') + '</span></div>';
+
+  if(!h.dependenciesAreLive){
+    head += '<div class="empty" style="padding:18px"><b>No measurement yet</b>' +
+      'Nothing is shown as healthy until it has actually been checked. Each check is ' +
+      'one request to a public metadata document, with no credentials and no member ' +
+      'data.</div>';
+  } else {
+    head += '<div class="tbl">' + h.dependencies.map(healthRow).join('') + '</div>';
+  }
+  head += '<div class="row-actions"><button class="btn sm" data-act="runHealth"' +
+    (S.checking ? ' disabled' : '') + '>' +
+    (S.checking ? 'Checking\u2026' : 'Run checks') + '</button>' +
+    '<span class="hint">On demand only \u2014 never on the background poll. A status ' +
+    'page that probes a carrier every few seconds, once per open tab, is a ' +
+    'self-inflicted outage.</span></div>';
+
+  // ---- embedding contract
+  head += '<div class="lbl" style="margin-top:18px">Embedding</div><div class="tbl">' +
+    kv('Origin', g.embed.origin) +
+    kv('SDK', g.embed.sdk) +
+    kv('Frame path', g.embed.widgetPath) +
+    kv('sandbox', g.embed.sandbox) +
+    kv('frame-ancestors', g.embed.frameAncestors,
+       g.embed.frameAncestors === '*' ? 'Any site can embed this. Production needs an '
+         + 'explicit allowlist of partner origins.' : '') +
+    kv('Protocol', g.embed.protocol) +
+    kv('Host \u2192 frame', (g.embed.messageTypes || []).join(', ')) +
+    kv('Frame \u2192 host', (g.embed.events || []).join(', ')) +
+    '</div>';
+
+  // ---- auth
+  head += '<div class="lbl" style="margin-top:18px">Authentication</div><div class="tbl">' +
+    kv('Scheme', g.auth.scheme) +
+    kv('Enforced', g.auth.enforced ? 'Yes' : 'No', g.auth.enforced ? '' : g.auth.note) +
+    kv('Max token age', g.auth.maxTtlDays + ' days') +
+    kv('Claims', Object.keys(g.auth.claims).map(function(k){
+         return k + '=' + g.auth.claims[k]; }).join('  ')) +
+    '</div>';
+
+  // ---- callbacks
+  head += '<div class="lbl" style="margin-top:18px">Inbound callbacks</div><div class="tbl">' +
+    kv('Inbound SMS', g.callbacks.inboundSms) +
+    kv('Delivery receipt', g.callbacks.deliveryReceipt) +
+    kv('Authenticated', g.callbacks.authenticated ? 'Yes' : 'No',
+       g.callbacks.authenticated ? '' : 'The carrier signs nothing. Restrict by source ' +
+       'address: ' + (g.callbacks.sourceRanges || []).join(', ')) +
+    '</div>';
+
+  // ---- limits
+  head += '<div class="lbl" style="margin-top:18px">Limits</div><div class="tbl">' +
+    kv('SMS characters', n(g.limits.smsCharacters),
+       g.limits.smsCharacters !== g.limits.smsCharactersProduction
+         ? 'Production caps at ' + n(g.limits.smsCharactersProduction) +
+           '. This value is a recommendation, not current HGS behaviour.' : '') +
+    kv('Voice characters', n(g.limits.ttsCharacters)) +
+    kv('Undo window', g.limits.undoSeconds + 's') +
+    kv('Poll interval', n(g.limits.pollIntervalMs) + 'ms',
+       'HGS-PWA polls comparable endpoints at 60,000ms.') +
+    kv('Inbox page size', n(g.limits.inboxPageSize)) +
+    '</div>';
+
+  // ---- credentials, by name and state only
+  head += '<div class="lbl" style="margin-top:18px">Credentials' +
+    '<span class="hint">names and state only \u2014 no values are ever returned' +
+    '</span></div><div class="tbl">' +
+    g.credentials.map(function(c){
+      return '<div class="r"><span class="c-main"><code>' + esc(c.key) + '</code>' +
+        '<span class="c-sub" style="display:block;font-weight:400">' + esc(c.note) +
+        '</span></span>' +
+        '<span class="c-sub" style="flex:none;width:210px;text-align:right">' +
+          esc(c.where) + '</span>' +
+        '<span style="flex:none;width:92px;text-align:right"><span class="pill ' +
+          (c.set ? 'ok' : 'warn') + '">' + (c.set ? 'Set' : 'Not set') + '</span></span>' +
+        '</div>';
+    }).join('') + '</div>';
+
+  return head;
+}
+
+function kv(k, v, warn){
+  return '<div class="r"><span class="c-sub" style="flex:none;width:150px">' + esc(k) +
+    '</span><span class="c-main" style="font-weight:400"><code>' + esc(v) + '</code>' +
+    (warn ? '<span class="c-sub" style="display:block;color:var(--warn)">' + esc(warn) +
+      '</span>' : '') + '</span></div>';
+}
+
+/* ---------------- settings ---------------- */
+function viewSettings(){
+  var st = S.cfg.settings || {}, f = S.cfg.flags;
+  var h = headerHtml('Settings', S.cfg.organizationName, false);
+  h += '<div class="field"><div class="lbl">Church name</div>' +
+    '<input type="text" id="sName" value="' + esc(S.cfg.organizationName) + '"></div>';
+  h += '<div class="two"><div class="field"><div class="lbl">Caller ID' +
+    '<span class="hint">shown on calls and texts</span></div>' +
+    '<input type="tel" id="sCaller" value="' + esc(st.callerId || '') + '"></div>' +
+    '<div class="field"><div class="lbl">Reply-to address</div>' +
+    '<input type="email" id="sReply" value="' + esc(st.replyTo || '') + '"></div></div>';
+  h += '<div class="field"><div class="lbl">Time zone</div>' +
+    '<input type="text" id="sTz" value="' + esc(st.timezone || '') + '"></div>';
+  h += '<div class="row-actions"><button class="btn sm" data-act="saveSettings">Save</button></div>';
+
+  h += '<div class="lbl" style="margin-top:18px">What this church can use</div>';
+  h += '<div class="tbl">';
+  [['text','Text messages'],['email','Email'],['voice','Phone calls'],
+   ['twoWay','Replies (two-way SMS)'],['emergency','Emergency sends'],
+   ['creditBased','Credit limits enforced']].forEach(function(x){
+    h += '<div class="r"><span class="c-main" style="font-weight:400">' + x[1] + '</span>' +
+      '<span class="c-tag"><span class="pill ' + (f[x[0]] ? 'ok' : '') + '">' +
+      (f[x[0]] ? 'On' : 'Off') + '</span></span></div>';
+  });
+  h += '</div><div class="note"><span class="i">i</span><span>These come from the ' +
+    'church record and are read-only here. In the live product no API returns them yet, ' +
+    'which is the one thing blocking correct channel gating.</span></div>';
+
+  h += '<div class="lbl" style="margin-top:18px">Credits</div><div class="tiles">' +
+    tile(n(S.cfg.credits.voice_sms), 'Voice & text') +
+    tile(n(S.cfg.credits.email), 'Email') + '</div>';
+  return h;
+}
+
+/* ---------------- reports ---------------- */
+var REPORTS = [
+  {k:'delivery', label:'Delivery', csv:'/reports/delivery.csv'},
+  {k:'optouts',  label:'Opt-outs', csv:'/reports/optouts.csv'},
+  {k:'invalid',  label:'Invalid contacts', csv:'/reports/invalid.csv'},
+  {k:'activity', label:'Recent activity', csv:null}
+];
+function viewReports(){
+  var h = headerHtml('Reports', 'Delivery, opt-outs, invalid contacts and activity');
+  h += '<div class="row-actions">' + REPORTS.map(function(r){
+    return '<button class="btn sm ' + (S.report === r.k ? '' : 'out') + '" data-act="report" data-r="' +
+      r.k + '">' + r.label + '</button>';
+  }).join('') + '</div>';
+
+  var def = REPORTS.filter(function(r){ return r.k === S.report; })[0];
+  if(def.csv)
+    h += '<div class="row-actions"><a class="btn sm out" style="text-decoration:none;display:inline-block" href="' +
+      API.base + def.csv + '" download>Download CSV</a></div>';
+
+  var rows = S.reportRows;
+  if(!rows.length) return h + '<div class="empty"><b>Nothing to report</b>This report has no rows right now.</div>';
+
+  if(S.report === 'delivery'){
+    h += '<div class="tbl"><div class="h"><span class="c-main">Message</span>' +
+      '<span class="c-num">Sent to</span><span class="c-num">Reached</span><span class="c-num">Rate</span></div>';
+    rows.forEach(function(r){
+      var cls = r.rate == null ? '' : r.rate >= 95 ? 'ok' : r.rate >= 85 ? 'warn' : 'bad';
+      h += '<div class="r click" data-act="openMsg" data-id="' + r.id + '">' +
+        '<span class="c-main">' + esc(r.name) +
+        '<br><span style="font-weight:400;color:var(--ink-3);font-size:11.5px">' + dateOnly(r.created_at) +
+        (r.emergency ? ' · emergency' : '') + '</span></span>' +
+        '<span class="c-num">' + n(r.reach) + '</span>' +
+        '<span class="c-num">' + n(r.reachedPeople) + '</span>' +
+        '<span class="c-num"><span class="pill ' + cls + '">' + (r.rate == null ? '—' : r.rate + '%') +
+        '</span></span></div>';
+    });
+    h += '</div><div class="note"><span class="i">i</span><span>“Reached” counts people who got the ' +
+      'message on at least one channel, not deliveries — a two-channel send gives each person two ' +
+      'delivery rows.</span></div>';
+    return h;
+  }
+  if(S.report === 'optouts' || S.report === 'invalid'){
+    h += '<div class="tbl"><div class="h"><span class="c-main">Name</span>' +
+      '<span class="c-sub">Contact</span><span class="c-tag">' +
+      (S.report === 'optouts' ? 'Opted out of' : 'Problem') + '</span></div>';
+    rows.forEach(function(r){
+      var tags = (S.report === 'optouts' ? r.channels : r.problems)
+        .map(function(x){ return '<span class="pill warn">' + esc(x) + '</span>'; }).join(' ');
+      h += '<div class="r click" data-act="openPerson" data-id="' + r.id + '">' +
+        '<span class="c-main">' + esc(r.name) + '</span>' +
+        '<span class="c-sub">' + esc(r.phone || r.email || '—') + '</span>' +
+        '<span class="c-tag">' + tags + '</span></div>';
+    });
+    return h + '</div>';
+  }
+  h += '<div class="tbl">';
+  rows.forEach(function(r){
+    h += '<div class="r"><span class="c-main">' + esc(r.summary) + '</span>' +
+      '<span class="c-tag" style="color:var(--ink-3);font-size:11.5px">' + when(r.at) + '</span></div>';
+  });
+  return h + '</div>';
+}
+
+/* ---------------- analytics ---------------- */
+function viewAnalytics(){
+  var a = S.analytics;
+  if(!a) return loading('Crunching the numbers…');
+  var h = headerHtml('Analytics', 'Last ' + a.days + ' days');
+  h += '<div class="row-actions">' + [90,180,365].map(function(d){
+    return '<button class="btn sm ' + (S.analyticsDays === d ? '' : 'out') + '" data-act="adays" data-d="' +
+      d + '">' + (d === 365 ? '12 months' : d + ' days') + '</button>';
+  }).join('') + '</div>';
+
+  var totalMsgs = a.months.reduce(function(s, m){ return s + m.messages; }, 0);
+  var totalRec = a.months.reduce(function(s, m){ return s + m.recipients; }, 0);
+  h += '<div class="tiles">' +
+    tile(n(totalMsgs), 'Messages sent', 'go') +
+    tile(n(totalRec), 'Total recipients') +
+    tile(a.replyRate == null ? '—' : a.replyRate + '%', 'Reply rate', 'ok') +
+    tile(n((a.credits && a.credits.voice_sms) || 0), 'Voice & text credits') +
+    '</div>';
+
+  if(a.months.length){
+    var max = Math.max.apply(null, a.months.map(function(m){ return m.recipients; })) || 1;
+    h += '<div class="lbl">Recipients per month</div><div class="chart">' + a.months.map(function(m){
+      return '<div class="col" title="' + m.month + ': ' + n(m.recipients) + ' recipients across ' +
+        m.messages + ' messages"><span class="v">' + n(m.recipients) + '</span>' +
+        '<i style="height:' + Math.max(2, (m.recipients / max) * 100) + '%"></i></div>';
+    }).join('') + '</div><div class="xaxis">' + a.months.map(function(m){
+      return '<span>' + m.month.slice(5) + '/' + m.month.slice(2,4) + '</span>';
+    }).join('') + '</div>';
+  }
+
+  if(a.channels.length){
+    h += '<div class="lbl" style="margin-top:18px">Delivery rate by channel</div><div class="hbars">' +
+      a.channels.map(function(c){
+        return '<div class="hbar"><span class="nm">' + CH[c.channel] + '</span>' +
+          '<span class="track"><i style="width:' + (c.rate || 0) + '%"></i></span>' +
+          '<span class="val">' + (c.rate == null ? '—' : c.rate + '%') + '</span></div>';
+      }).join('') + '</div>' +
+      '<div class="note"><span class="i">i</span><span>Based on ' +
+      n(a.channels.reduce(function(s, c){ return s + c.sent; }, 0)) + ' deliveries.</span></div>';
+  }
+
+  if(a.topGroups.length){
+    var gmax = Math.max.apply(null, a.topGroups.map(function(g){ return g.sends; })) || 1;
+    h += '<div class="lbl" style="margin-top:18px">Most-messaged groups</div><div class="hbars">' +
+      a.topGroups.map(function(g){
+        return '<div class="hbar"><span class="nm">' + esc(g.name) + '</span>' +
+          '<span class="track"><i style="width:' + (g.sends / gmax) * 100 + '%"></i></span>' +
+          '<span class="val">' + g.sends + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  if(a.statuses.length){
+    var smax = a.statuses.reduce(function(s, x){ return s + x.n; }, 0) || 1;
+    h += '<div class="lbl" style="margin-top:18px">Every delivery outcome</div><div class="hbars">' +
+      a.statuses.map(function(x){
+        return '<div class="hbar"><span class="nm">' + (ST[x.status] || x.status) + '</span>' +
+          '<span class="track"><i style="width:' + (x.n / smax) * 100 +
+          '%;background:var(--' + ({delivered:'ok', answered:'ok', failed:'emg',
+            suppressed:'ink-3', no_answer:'sched', voicemail:'sched'}[x.status] || 'primary') + ')"></i></span>' +
+          '<span class="val">' + n(x.n) + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  if(S.links && S.links.length){
+    var withClicks = S.links.filter(function(l){ return l.clicks > 0; });
+    var lmax = Math.max.apply(null, S.links.map(function(l){ return l.clicks; })) || 1;
+    h += '<div class="lbl" style="margin-top:18px">Link clicks <span class="hint">' +
+      n(withClicks.length) + ' of ' + n(S.links.length) + ' links clicked</span></div>' +
+      '<div class="hbars">' + S.links.slice(0, 8).map(function(l){
+        return '<div class="hbar"><span class="nm" title="' + esc(l.url) + '">' +
+          esc(l.message_name || l.url) + '</span>' +
+          '<span class="track"><i style="width:' + (l.clicks / lmax * 100) + '%"></i></span>' +
+          '<span class="val">' + n(l.clicks) + '</span></div>';
+      }).join('') + '</div>' +
+      '<div class="note"><span class="i">i</span><span>Links in a text are swapped for a ' +
+      'short trackable one. Click-through is the only engagement signal a text can give ' +
+      'you.</span></div>';
+  }
+
+  h += '<div class="note" style="margin-top:18px"><span class="i">i</span><span>Reply rate is ' +
+    n(a.repliers) + ' people who answered out of ' + n(a.textedPeople) +
+    ' who received a text. People on email or calls only cannot reply.</span></div>';
+  return h;
+}
+
+/* ---------------- undo ---------------- */
+function undoHtml(){
+  if(!S.lastSend || !S.undoTimer) return '';
+  return '<div class="undo"><span>Sent to ' + n(S.lastSend.reach) + ' people · ' + S.undoLeft +
+         's</span><button data-act="undo">Undo</button></div>';
+}
+
+/* =========================================================================
+   PARTIAL PAINT
+   ========================================================================= */
+function paintTail(){
+  var t = document.getElementById('tail'); if(t) t.innerHTML = tailHtml();
+  var l = document.getElementById('msgLbl'); if(l) l.innerHTML = msgLabel();
+  var m = document.getElementById('meterWrap'); if(m) m.innerHTML = meterHtml();
+  BRIDGE.measure();
+}
+function paintBadge(){
+  var btn = document.querySelector('[data-v="replies"]');
+  if(!btn) return;
+  var b = btn.querySelector('.bdg');
+  if(S.cfg.unreadReplies){
+    if(b) b.textContent = S.cfg.unreadReplies;
+    else btn.insertAdjacentHTML('beforeend', '<span class="bdg">' + S.cfg.unreadReplies + '</span>');
+  } else if(b) b.remove();
+}
+
+/* =========================================================================
+   MODAL
+   ========================================================================= */
+function closeModal(){ document.getElementById('modal').innerHTML = ''; BRIDGE.measure(); }
+function showModal(title, bodyHtml, okLabel, onOk){
+  var m = document.getElementById('modal');
+  m.innerHTML = '<div class="modal" data-overlay><div class="box"><h2>' + esc(title) + '</h2>' +
+    bodyHtml + '<div class="row-actions" style="margin:14px 0 0">' +
+    '<button class="btn sm" id="mOk">' + esc(okLabel) + '</button>' +
+    '<button class="btn sm out" data-closebtn>Cancel</button></div></div></div>';
+  m.querySelector('#mOk').onclick = onOk;
+  var first = m.querySelector('input,textarea,select');
+  if(first) first.focus();
+  BRIDGE.measure();
+}
+document.getElementById('modal').addEventListener('click', function(e){
+  if(e.target.hasAttribute('data-overlay') || e.target.closest('[data-closebtn]')) closeModal();
+});
+
+/* =========================================================================
+   EVENTS
+   ========================================================================= */
+var searchTimer = null, peopleTimer = null, inboxTimer = null;
+function bindDynamic(){
+  var q = document.getElementById('q');
+  if(q){
+    q.addEventListener('input', function(){
+      S.query = q.value; S.highlight = -1;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(async function(){
+        if(S.query.trim().length >= 2){
+          try{ S.qResults = (await API.get('/people?q=' + encodeURIComponent(S.query.trim()) + '&size=8')).people || []; }
+          catch(e){ S.qResults = []; }
+        } else S.qResults = [];
+        redrawResults();
+      }, 180);
+      redrawResults();
+    });
+    q.addEventListener('keydown', onQueryKey);
+    if(S.query){ q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  }
+  var iq = document.getElementById('inboxQ');
+  if(iq){
+    iq.addEventListener('input', function(){
+      S.inboxQ = iq.value;
+      clearTimeout(inboxTimer);
+      // 250ms: long enough not to query on every keystroke, short enough that
+      // the list feels like it is filtering rather than loading.
+      inboxTimer = setTimeout(function(){ load('replies'); }, 250);
+    });
+    if(S.inboxQ){ iq.focus(); iq.setSelectionRange(iq.value.length, iq.value.length); }
+  }
+  var msg = document.getElementById('msg');
+  if(msg){
+    msg.addEventListener('input', function(){
+      S.text = msg.value; paintTail();
+      clearTimeout(msg._t); msg._t = setTimeout(refreshCost, 220);
+      // Autosave. A legacy NPS complaint was losing typed text to a refresh;
+      // someone who writes to 1,240 people should never retype a word.
+      clearTimeout(S.autosaveTimer);
+      S.autosaveTimer = setTimeout(saveDraft, 1500);
+    });
+  }
+  var rep = document.getElementById('reply');
+  if(rep){
+    rep.addEventListener('input', function(){
+      S.replyText = rep.value;
+      rep.style.height = 'auto'; rep.style.height = Math.min(120, rep.scrollHeight) + 'px';
+      var b = document.querySelector('[data-act="sendReply"]');
+      if(b) b.disabled = !S.replyText.trim() || S.replying;
+      BRIDGE.measure();
+    });
+    rep.addEventListener('keydown', function(e){
+      if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendReply(); }
+    });
+    rep.focus();
+  }
+  var ps = document.getElementById('psearch');
+  if(ps){
+    ps.addEventListener('input', function(){
+      S.peopleQ = ps.value;
+      clearTimeout(peopleTimer);
+      peopleTimer = setTimeout(async function(){
+        S.people.page = 1;
+        await loadPeople(); render();
+      }, 260);
+    });
+    if(S.peopleQ){ ps.focus(); ps.setSelectionRange(ps.value.length, ps.value.length); }
+  }
+}
+function redrawResults(){
+  var el = document.getElementById('results');
+  if(el){ el.innerHTML = resultsHtml(); BRIDGE.measure(); }
+}
+function onQueryKey(e){
+  var rows = document.querySelectorAll('#results .res');
+  if(e.key === 'ArrowDown'){ e.preventDefault(); S.highlight = Math.min(rows.length - 1, S.highlight + 1); redrawResults(); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); S.highlight = Math.max(-1, S.highlight - 1); redrawResults(); }
+  else if(e.key === 'Enter' && S.highlight > -1){
+    e.preventDefault();
+    var el = rows[S.highlight];
+    if(el) pick(el.dataset.kind, el.dataset.id);
+  }
+  else if(e.key === 'Backspace' && !S.query && S.audience.length){
+    var last = S.audience[S.audience.length - 1];
+    if(!last.locked){ S.audience.pop(); refreshCost(); render(); }
+  }
+  else if(e.key === 'Escape'){ S.query = ''; S.qResults = []; S.highlight = -1; render(); }
+}
+function pick(kind, id){
+  var src = kind === 'group' ? S.groups : S.qResults;
+  var o = src.filter(function(x){ return String(x.id) === String(id); })[0];
+  if(!o) return;
+  S.audience.push({kind:kind, id:String(o.id), name:o.name,
+                   count: kind === 'group' ? o.count : 1, locked:false});
+  S.query = ''; S.qResults = []; S.highlight = -1;
+  refreshCost(); render();
+  BRIDGE.send('recipientsChanged', {recipients:S.audience, reach:reach()});
+}
+
+// The section key stayed 'replies' so existing host integrations keep working,
+// but the label is now Inbox. Accept both from a host rather than making anyone
+// remember which one this build wants.
+function viewKey(v){ return v === 'inbox' ? 'replies' : v; }
+
+async function go(view){
+  S.navOpen = false;
+  S.view = view;
+  S.openMessage = null; S.openThread = null; S.openPerson = null; S.openGroup = null;
+  S.loadingDetail = null;
+  render();
+  try{ await load(); }catch(e){ toast(e.message || 'Could not load'); }
+  render();
+  BRIDGE.send('viewChanged', {view:view});
+}
+
+async function sendReply(){
+  var body = S.replyText.trim();
+  if(!body || S.replying || !S.openThread) return;
+  S.replying = true;
+  var b = document.querySelector('[data-act="sendReply"]'); if(b) b.disabled = true;
+  try{
+    await API.post('/threads/' + S.openThread.id + '/reply', {body:body});
+    S.replyText = '';
+    S.openThread = await API.get('/threads/' + S.openThread.id);
+    S.cfg = await API.get('/bootstrap');
+    BRIDGE.send('replied', {threadId:S.openThread.id, personId:S.openThread.person_id});
+  }catch(err){ toast(err.message || 'Could not send reply'); }
+  S.replying = false; render();
+}
+
+function toast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(function(){ t.classList.remove('show'); }, 3300);
+}
+
+async function guard(fn){
+  if(S.busy) return;
+  S.busy = true;
+  try { await fn(); } catch(err){ toast(err.message || 'Something went wrong'); }
+  S.busy = false;
+}
+
+document.addEventListener('click', function(e){
+  if(S.navOpen && !e.target.closest('#topnav')){ S.navOpen = false; fitNav(); }
+}, true);
+
+document.addEventListener('click', function(e){
+  var t = e.target.closest('[data-act]');
+  if(!t) return;
+  var a = t.dataset.act, id = t.dataset.id;
+
+  if(a === 'nav')            return go(t.dataset.v);
+  if(a === 'tileNav'){
+    var to = t.dataset.to.split(':');
+    if(to[0] === 'reports'){ S.report = to[1]; return go('reports'); }
+    return go(to[0]);
+  }
+  if(a === 'pick')           return pick(t.dataset.kind, id);
+  if(a === 'unpick'){        S.audience.splice(+t.dataset.i, 1); refreshCost(); return render(); }
+  if(a === 'chan'){
+    var k = t.dataset.k, i = S.channels.indexOf(k);
+    if(i > -1) S.channels.splice(i, 1); else S.channels.push(k);
+    refreshCost(); return render();
+  }
+  if(a === 'send')           return doSend();
+  if(a === 'emergency'){     S.emergency = true; S.channels = gate(['text','voice']); refreshCost(); return render(); }
+  if(a === 'unemergency'){   S.emergency = false; refreshCost(); return render(); }
+  if(a === 'emergencyFromDash'){
+    S.emergency = true; S.channels = gate(['text','voice']);
+    S.view = 'compose'; render(); return;
+  }
+  if(a === 'undo')           return doUndo();
+
+  if(a === 'openMsg'){
+    S.view = 'sent'; S.openMessage = null; S.openPerson = null; S.openGroup = null;
+    S.loadingDetail = +id; render();
+    return API.get('/messages/' + id).then(function(m){
+      S.loadingDetail = null; S.openMessage = m; render();
+    }).catch(function(err){ S.loadingDetail = null; toast(err.message); render(); });
+  }
+  if(a === 'closeMsg'){ S.openMessage = null; return guard(async function(){ await load(); render(); }); }
+
+  if(a === 'runHealth'){
+    if(S.checking) return;
+    S.checking = true; render();
+    return guard(async function(){
+      try{ await API.post('/health/check', {}); }
+      finally{
+        S.checking = false;
+        S.health = await API.get('/health');
+        render();
+      }
+    });
+  }
+  if(a === 'navMore'){
+    S.navOpen = !S.navOpen; fitNav();
+    return;
+  }
+  if(a === 'inboxTab'){
+    S.inboxState = t.dataset.k; S.threads = []; render();
+    return load('replies');
+  }
+  if(a === 'assignThread'){
+    return guard(async function(){
+      await API.post('/inbox/' + id + '/assign', {staff_id: t.value || null});
+      S.openThread = await API.get('/threads/' + id);
+      toast(t.value ? 'Assigned' : 'Unassigned'); render();
+    });
+  }
+  if(a === 'threadState'){
+    return guard(async function(){
+      await API.post('/inbox/' + id + '/state', {state: t.dataset.state});
+      S.openThread = await API.get('/threads/' + id);
+      toast(t.dataset.state === 'done' ? 'Marked done' : 'Reopened'); render();
+    });
+  }
+  if(a === 'reviewThread'){
+    return guard(async function(){
+      var act = t.dataset.action;
+      await API.post('/inbox/' + id + '/review', {action: act});
+      S.openThread = await API.get('/threads/' + id);
+      toast(act === 'optout' ? 'Opted out of text' : 'Left subscribed');
+      render();
+    });
+  }
+  if(a === 'openThread' || a === 'openThreadId'){
+    S.view = 'replies'; S.openMessage = null; S.openPerson = null;
+    return guard(async function(){
+      S.openThread = await API.get('/threads/' + id);
+      S.replyText = ''; S.cfg = await API.get('/bootstrap'); render();
+    });
+  }
+  if(a === 'closeThread'){ S.openThread = null; S.replyText = ''; return guard(async function(){ await load(); render(); }); }
+  if(a === 'sendReply')      return sendReply();
+
+  if(a === 'openPerson'){
+    S.view = 'people'; S.openMessage = null; S.openThread = null; S.openGroup = null;
+    return guard(async function(){ S.openPerson = await API.get('/people/' + id); render(); });
+  }
+  if(a === 'closePerson'){ S.openPerson = null; return guard(async function(){ await loadPeople(); render(); }); }
+  if(a === 'peopleFilter'){
+    S.peopleFilter = t.dataset.f || ''; S.peopleGroup = ''; S.people.page = 1;
+    if(!t.dataset.f) S.peopleQ = '';
+    return guard(async function(){ await loadPeople(); render(); });
+  }
+  if(a === 'peopleInGroup'){
+    S.view = 'people'; S.openGroup = null; S.openPerson = null;
+    S.peopleGroup = id; S.peopleFilter = ''; S.peopleQ = ''; S.people.page = 1;
+    return guard(async function(){ await loadPeople(); render(); });
+  }
+  if(a === 'pPage'){
+    var p = +t.dataset.p;
+    if(p < 1 || p > S.people.pages) return;
+    S.people.page = p;
+    return guard(async function(){ await loadPeople(); render(); });
+  }
+  if(a === 'toggleOptOut'){
+    var c = t.dataset.c, cur = S.openPerson.opted_out[c];
+    return guard(async function(){
+      var patch = {}; patch['opt_' + c] = !cur;
+      await API.patch('/people/' + S.openPerson.id, patch);
+      S.openPerson = await API.get('/people/' + S.openPerson.id);
+      toast(cur ? CH[c] + ' turned back on' : 'Opted out of ' + CH[c].toLowerCase());
+      render();
+    });
+  }
+  if(a === 'archivePerson'){
+    var p2 = S.openPerson;
+    return guard(async function(){
+      if(p2.archived) await API.patch('/people/' + p2.id, {archived:false});
+      else await API.del('/people/' + p2.id);
+      S.openPerson = await API.get('/people/' + p2.id);
+      toast(p2.archived ? 'Restored' : 'Archived');
+      render();
+    });
+  }
+  if(a === 'messagePerson'){
+    S.audience = [{kind:'person', id:String(id), name:t.dataset.name, count:1, locked:false}];
+    S.openPerson = null; refreshCost(); return go('compose');
+  }
+  if(a === 'messageGroup'){
+    S.audience = [{kind:'group', id:String(id), name:t.dataset.name,
+                   count:+t.dataset.count || 0, locked:false}];
+    S.openGroup = null; refreshCost(); return go('compose');
+  }
+  if(a === 'editPerson')     return editPersonModal();
+  if(a === 'addPerson')      return addPersonModal();
+
+  if(a === 'openGroup'){
+    S.view = 'groups'; S.openPerson = null; S.openMessage = null;
+    return guard(async function(){ S.openGroup = await API.get('/groups/' + id); render(); });
+  }
+  if(a === 'closeGroup'){ S.openGroup = null; return guard(async function(){
+    S.groups = (await API.get('/groups')).groups || []; render(); }); }
+  if(a === 'addGroup')       return addGroupModal();
+  if(a === 'renameGroup')    return renameGroupModal();
+  if(a === 'deleteGroup')    return deleteGroupModal();
+  if(a === 'removeMember'){
+    var gid = S.openGroup.id;
+    return guard(async function(){
+      await API.del('/groups/' + gid + '/members', {person_ids:[+id]});
+      S.openGroup = await API.get('/groups/' + gid);
+      toast('Removed from group'); render();
+    });
+  }
+
+  // ---- keywords
+  if(a === 'addKeyword')     return keywordModal();
+  if(a === 'toggleKeyword'){
+    return guard(async function(){
+      await API.patch('/keywords/' + id, {active: t.dataset.on !== '1'});
+      S.keywords = (await API.get('/keywords')).keywords || [];
+      toast(t.dataset.on === '1' ? 'Keyword paused' : 'Keyword active'); render();
+    });
+  }
+  if(a === 'deleteKeyword'){
+    return showModal('Delete the keyword ' + t.dataset.w + '?',
+      '<p style="margin:0;color:var(--ink-2);font-size:13px">Anyone who already joined ' +
+      'through it stays on the list. Anyone partway through its follow-up sequence stops ' +
+      'receiving it.</p>', 'Delete keyword', function(){
+        guard(async function(){
+          await API.del('/keywords/' + id);
+          closeModal();
+          S.keywords = (await API.get('/keywords')).keywords || [];
+          toast('Keyword deleted'); render();
+        });
+      });
+  }
+  if(a === 'simKeyword'){
+    return guard(async function(){
+      var r = await API.post('/simulate/keyword', {word: t.dataset.w});
+      S.keywords = (await API.get('/keywords')).keywords || [];
+      S.cfg = await API.get('/bootstrap');
+      toast('Someone just texted ' + t.dataset.w + ' - see Replies');
+      render();
+    });
+  }
+
+  // ---- polls
+  if(a === 'addPoll')        return pollModal();
+  if(a === 'closePoll'){
+    return guard(async function(){
+      await API.post('/polls/' + id + '/close');
+      S.polls = (await API.get('/polls')).polls || [];
+      toast('Poll closed'); render();
+    });
+  }
+
+  // ---- templates
+  if(a === 'addTemplate')    return templateModal(null);
+  if(a === 'editTemplate'){
+    var tpl = S.templates.filter(function(x){ return String(x.id) === id; })[0];
+    return templateModal(tpl);
+  }
+  if(a === 'deleteTemplate'){
+    return showModal('Delete \u201C' + t.dataset.name + '\u201D?',
+      '<p style="margin:0;color:var(--ink-2);font-size:13px">Messages already sent from ' +
+      'this template are not affected.</p>', 'Delete template', function(){
+        guard(async function(){
+          await API.del('/templates/' + id);
+          closeModal();
+          var tr = await API.get('/templates');
+          S.templates = tr.templates || []; S.templateCats = tr.categories || [];
+          toast('Template deleted'); render();
+        });
+      });
+  }
+  if(a === 'useTemplate' || a === 'applyTemplate'){
+    var tp = S.templates.filter(function(x){ return String(x.id) === id; })[0];
+    if(!tp) return;
+    S.text = tp.body; S.templateId = tp.id;
+    S.channels = gate(tp.channels && tp.channels.length ? tp.channels : S.channels);
+    closeModal();
+    S.view = 'compose'; render(); refreshCost(); refreshPreview().then(render);
+    toast('Template applied');
+    return;
+  }
+  if(a === 'pickTemplate'){
+    if(!S.templates.length) return toast('No templates saved yet');
+    return showModal('Use a template',
+      '<div class="list">' + S.templates.map(function(x){
+        return '<div class="card" data-act="applyTemplate" data-id="' + x.id + '">' +
+          '<div class="top"><b>' + esc(x.name) + '</b><time>' + esc(x.category || '') +
+          '</time></div><div class="prev">' + esc(x.body) + '</div></div>';
+      }).join('') + '</div>', 'Close', closeModal);
+  }
+
+  // ---- attachments
+  if(a === 'attach'){
+    return showModal('Attach a link',
+      '<div class="field"><div class="lbl">Label</div>' +
+      '<input type="text" id="aName" placeholder="e.g. Camp consent form"></div>' +
+      '<div class="field"><div class="lbl">Link</div>' +
+      '<input type="text" id="aUrl" placeholder="https://..."></div>' +
+      '<div class="note"><span class="i">i</span><span>Texts carry a link, not a file. ' +
+      'The link is appended to the message.</span></div>', 'Attach', function(){
+        var nm = (document.getElementById('aName').value || '').trim();
+        var url = (document.getElementById('aUrl').value || '').trim();
+        if(!nm || !url) return toast('Give the link a label and an address');
+        if(!/^https?:\/\//i.test(url)) return toast('Links must start with http:// or https://');
+        S.attachments.push({name:nm.slice(0,60), url:url});
+        closeModal(); render();
+      });
+  }
+  if(a === 'unattach'){ S.attachments.splice(+t.dataset.i, 1); return render(); }
+
+  // ---- schedule
+  if(a === 'schedule'){
+    var dflt = new Date(Date.now() + 36e5);
+    var pad = function(x){ return String(x).padStart(2, '0'); };
+    var local = dflt.getFullYear() + '-' + pad(dflt.getMonth() + 1) + '-' + pad(dflt.getDate()) +
+                'T' + pad(dflt.getHours()) + ':' + pad(dflt.getMinutes());
+    return showModal('Schedule this message',
+      '<div class="field"><div class="lbl">Send at</div>' +
+      '<input type="datetime-local" id="schedAt" value="' + local + '"></div>' +
+      '<div class="note"><span class="i">i</span><span>Credits are reserved when you ' +
+      'schedule and returned if you cancel.</span></div>', 'Schedule', function(){
+        var v = document.getElementById('schedAt').value;
+        if(!v) return toast('Pick a date and time');
+        var when2 = new Date(v);
+        if(isNaN(when2.getTime())) return toast('That is not a valid date');
+        if(when2.getTime() < Date.now() + 60000)
+          return toast('Pick a time at least a minute from now');
+        S.scheduleAt = when2.toISOString();
+        closeModal(); render();
+      });
+  }
+  if(a === 'unschedule'){ S.scheduleAt = ''; return render(); }
+
+  // ---- preview
+  if(a === 'togglePreview'){
+    S.showPreview = !S.showPreview;
+    if(!S.showPreview){ S.preview = null; return render(); }
+    return guard(async function(){ await refreshPreview(); render(); });
+  }
+
+  // ---- test send
+  if(a === 'testSend'){
+    return guard(async function(){
+      S.testing = true;
+      await API.post('/messages', {test:true, audience:S.audience, channels:S.channels,
+                                   body:S.text, attachments:S.attachments});
+      S.testing = false;
+      toast('Test sent to ' + S.audience[0].name + ' only');
+    });
+  }
+
+  // ---- drafts
+  if(a === 'openDraft'){
+    return guard(async function(){
+      var dr = (S.drafts || []).filter(function(x){ return String(x.id) === id; })[0];
+      if(!dr){ S.drafts = (await API.get('/drafts')).drafts || [];
+               dr = S.drafts.filter(function(x){ return String(x.id) === id; })[0]; }
+      if(!dr) return toast('That draft is gone');
+      S.text = dr.body; S.draftId = dr.id; S.draftSavedAt = dr.created_at;
+      S.channels = gate(dr.channels && dr.channels.length ? dr.channels : ['text']);
+      S.audience = normalise(dr.audience || []);
+      S.attachments = dr.attachments || [];
+      S.view = 'compose'; render(); refreshCost();
+    });
+  }
+  if(a === 'deleteDraft'){
+    return guard(async function(){
+      await API.del('/drafts/' + id);
+      if(String(S.draftId) === id){ S.draftId = null; S.draftSavedAt = null; }
+      S.drafts = (await API.get('/drafts')).drafts || [];
+      toast('Draft discarded'); render();
+    });
+  }
+
+  // ---- scheduled message actions
+  if(a === 'sendNow'){
+    return guard(async function(){
+      await API.post('/messages/' + id + '/send-now');
+      S.openMessage = await API.get('/messages/' + id);
+      toast('Sending now'); render();
+    });
+  }
+  if(a === 'cancelScheduled'){
+    return guard(async function(){
+      await API.post('/messages/' + id + '/cancel');
+      S.openMessage = await API.get('/messages/' + id);
+      S.cfg = await API.get('/bootstrap');
+      toast('Cancelled, credits returned'); render();
+    });
+  }
+
+  // ---- settings
+  if(a === 'saveSettings'){
+    return guard(async function(){
+      await API.patch('/settings', {
+        organizationName: document.getElementById('sName').value,
+        callerId: document.getElementById('sCaller').value,
+        replyTo: document.getElementById('sReply').value,
+        timezone: document.getElementById('sTz').value
+      });
+      S.cfg = await API.get('/bootstrap');
+      toast('Settings saved'); render();
+    });
+  }
+
+  if(a === 'report'){ S.report = t.dataset.r; return guard(async function(){ await loadReport(); render(); }); }
+  if(a === 'adays'){ S.analyticsDays = +t.dataset.d; return guard(async function(){
+    S.analytics = await API.get('/analytics?days=' + S.analyticsDays); render(); }); }
+});
+
+document.addEventListener('keydown', function(e){
+  var t = e.target.closest('[data-act="chan"],[data-act="toggleOptOut"]');
+  if(t && (e.key === ' ' || e.key === 'Enter')){ e.preventDefault(); t.click(); }
+  if(e.key === 'Escape'){
+    if(S.navOpen){ S.navOpen = false; fitNav(); document.getElementById('navMore').focus(); return; }
+    if(document.getElementById('modal').innerHTML) closeModal();
+  }
+});
+
+/* ---------------- modals ---------------- */
+function addPersonModal(){
+  showModal('Add a person',
+    '<div class="field"><div class="lbl">Name</div><input type="text" id="fName" placeholder="Full name"></div>' +
+    '<div class="two"><div class="field"><div class="lbl">Mobile</div><input type="tel" id="fPhone" placeholder="+1 555 0100"></div>' +
+    '<div class="field"><div class="lbl">Email</div><input type="email" id="fEmail" placeholder="name@example.org"></div></div>' +
+    '<div class="field"><div class="lbl">Add to group</div><select id="fGroup"><option value="">None</option>' +
+    S.groups.map(function(g){ return '<option value="' + g.id + '">' + esc(g.name) + '</option>'; }).join('') +
+    '</select></div>', 'Add person', function(){
+      var body = {
+        name: document.getElementById('fName').value,
+        phone: document.getElementById('fPhone').value,
+        email: document.getElementById('fEmail').value
+      };
+      var g = document.getElementById('fGroup').value;
+      if(g) body.group_ids = [+g];
+      guard(async function(){
+        await API.post('/people', body);
+        closeModal(); toast('Person added');
+        S.people.page = 1; await loadPeople();
+        S.groups = (await API.get('/groups')).groups || [];
+        render();
+      });
+    });
+}
+function editPersonModal(){
+  var p = S.openPerson;
+  showModal('Edit ' + p.name,
+    '<div class="field"><div class="lbl">Name</div><input type="text" id="fName" value="' + esc(p.name) + '"></div>' +
+    '<div class="two"><div class="field"><div class="lbl">Mobile</div><input type="tel" id="fPhone" value="' + esc(p.phone || '') + '"></div>' +
+    '<div class="field"><div class="lbl">Email</div><input type="email" id="fEmail" value="' + esc(p.email || '') + '"></div></div>',
+    'Save', function(){
+      guard(async function(){
+        await API.patch('/people/' + p.id, {
+          name: document.getElementById('fName').value,
+          phone: document.getElementById('fPhone').value,
+          email: document.getElementById('fEmail').value
+        });
+        S.openPerson = await API.get('/people/' + p.id);
+        closeModal(); toast('Saved'); render();
+      });
+    });
+}
+function keywordModal(){
+  var groupOpts = '<option value="">Do not add to a list</option>' +
+    S.groups.map(function(g){
+      return '<option value="' + g.id + '">' + esc(g.name) + '</option>'; }).join('');
+  showModal('New keyword',
+    '<div class="two"><div class="field"><div class="lbl">Keyword</div>' +
+    '<input type="text" id="kWord" placeholder="JOIN" maxlength="20"></div>' +
+    '<div class="field"><div class="lbl">Add them to</div>' +
+    '<select id="kGroup">' + groupOpts + '</select></div></div>' +
+    '<div class="field"><div class="lbl">Auto-reply <span class="hint">sent instantly</span></div>' +
+    '<textarea id="kReply" rows="3" placeholder="You are on the list - welcome!"></textarea></div>' +
+    '<div class="lbl">Follow-up sequence <span class="hint">optional</span></div>' +
+    [1, 2].map(function(i){
+      return '<div class="two" style="margin-bottom:8px">' +
+        '<div class="field" style="margin:0"><div class="lbl">Step ' + i + ' after</div>' +
+        '<select id="kDelay' + i + '"><option value="0">immediately</option>' +
+        '<option value="60">1 hour</option><option value="1440">1 day</option>' +
+        '<option value="4320">3 days</option><option value="10080">1 week</option></select></div>' +
+        '<div class="field" style="margin:0"><div class="lbl">Message</div>' +
+        '<input type="text" id="kBody' + i + '" placeholder="(leave blank to skip)"></div></div>';
+    }).join('') +
+    '<div class="note"><span class="i">i</span><span>STOP, HELP and START are reserved by ' +
+    'the carriers. Personalise with <code>{{first_name}}</code>.</span></div>',
+    'Create keyword', function(){
+      var steps = [];
+      [1, 2].forEach(function(i){
+        var b = (document.getElementById('kBody' + i).value || '').trim();
+        if(b) steps.push({delay_minutes: +document.getElementById('kDelay' + i).value, body: b});
+      });
+      guard(async function(){
+        await API.post('/keywords', {
+          word: document.getElementById('kWord').value,
+          reply: document.getElementById('kReply').value,
+          group_id: document.getElementById('kGroup').value || null,
+          steps: steps
+        });
+        closeModal();
+        S.keywords = (await API.get('/keywords')).keywords || [];
+        toast('Keyword created'); render();
+      });
+    });
+}
+
+function pollModal(){
+  showModal('New poll',
+    '<div class="field"><div class="lbl">Question</div>' +
+    '<input type="text" id="pQ" placeholder="Which night suits you best?"></div>' +
+    '<div class="field"><div class="lbl">Options <span class="hint">one per line, 2 to 10</span></div>' +
+    '<textarea id="pOpts" rows="4" placeholder="Tuesday&#10;Wednesday&#10;Thursday"></textarea></div>' +
+    '<div class="field"><div class="lbl">Send to</div><select id="pGroup">' +
+    S.groups.map(function(g){
+      return '<option value="' + g.id + '">' + esc(g.name) + ' (' + n(g.count) + ')</option>';
+    }).join('') + '</select></div>' +
+    '<div class="note"><span class="i">i</span><span>Goes out as a numbered list ending ' +
+    '&ldquo;Reply with a number&rdquo;. Costs one credit per recipient like any text.</span></div>',
+    'Send poll', function(){
+      var opts = (document.getElementById('pOpts').value || '')
+        .split('\n').map(function(x){ return x.trim(); }).filter(Boolean);
+      var gid = document.getElementById('pGroup').value;
+      var g = S.groups.filter(function(x){ return String(x.id) === gid; })[0];
+      guard(async function(){
+        await API.post('/polls', {
+          question: document.getElementById('pQ').value,
+          options: opts,
+          audience: [{kind: 'group', id: +gid, name: g ? g.name : '', count: g ? g.count : 0}]
+        });
+        closeModal();
+        S.polls = (await API.get('/polls')).polls || [];
+        S.cfg = await API.get('/bootstrap');
+        toast('Poll sent'); render();
+      });
+    });
+}
+
+function templateModal(tpl){
+  var cats = S.templateCats.slice();
+  ['Announcements','Emergency','Pastoral','Volunteers','Worship','Youth'].forEach(function(c){
+    if(cats.indexOf(c) === -1) cats.push(c);
+  });
+  showModal(tpl ? 'Edit template' : 'New template',
+    '<div class="field"><div class="lbl">Name</div><input type="text" id="tName" value="' +
+    esc(tpl ? tpl.name : '') + '" placeholder="e.g. Service cancelled"></div>' +
+    '<div class="field"><div class="lbl">Category</div><select id="tCat">' +
+    '<option value="">Uncategorised</option>' +
+    cats.map(function(c){
+      return '<option' + (tpl && tpl.category === c ? ' selected' : '') + '>' + esc(c) + '</option>';
+    }).join('') + '</select></div>' +
+    '<div class="field"><div class="lbl">Message</div><textarea id="tBody" rows="5">' +
+    esc(tpl ? tpl.body : '') + '</textarea></div>' +
+    '<div class="note"><span class="i">i</span><span>Personalise with ' +
+    (S.mergeFields.length ? S.mergeFields : ['first_name','last_name','full_name'])
+      .map(function(f){ return '<code>{{' + f + '}}</code>'; }).join(', ') +
+    '. Anything else is rejected rather than sent out blank.</span></div>',
+    tpl ? 'Save' : 'Create', function(){
+      var body = {
+        name: document.getElementById('tName').value,
+        category: document.getElementById('tCat').value,
+        body: document.getElementById('tBody').value
+      };
+      guard(async function(){
+        if(tpl) await API.patch('/templates/' + tpl.id, body);
+        else await API.post('/templates', body);
+        closeModal();
+        var tr = await API.get('/templates');
+        S.templates = tr.templates || []; S.templateCats = tr.categories || [];
+        S.mergeFields = tr.mergeFields || S.mergeFields;
+        toast(tpl ? 'Template saved' : 'Template created');
+        render();
+      });
+    });
+}
+
+function addGroupModal(){
+  showModal('Create a group',
+    '<div class="field"><div class="lbl">Name</div><input type="text" id="gName" placeholder="e.g. Prayer Chain"></div>' +
+    '<div class="field"><div class="lbl">Type</div><select id="gType">' +
+    ['Campus','Ministry','Small Group','Serving Team','Custom'].map(function(x){
+      return '<option' + (x === 'Custom' ? ' selected' : '') + '>' + x + '</option>'; }).join('') +
+    '</select></div>', 'Create', function(){
+      guard(async function(){
+        await API.post('/groups', {name: document.getElementById('gName').value,
+                                   type: document.getElementById('gType').value});
+        closeModal(); toast('Group created');
+        S.groups = (await API.get('/groups')).groups || [];
+        render();
+      });
+    });
+}
+function renameGroupModal(){
+  var g = S.openGroup;
+  showModal('Rename group',
+    '<div class="field"><div class="lbl">Name</div><input type="text" id="gName" value="' + esc(g.name) + '"></div>',
+    'Save', function(){
+      guard(async function(){
+        await API.patch('/groups/' + g.id, {name: document.getElementById('gName').value});
+        S.openGroup = await API.get('/groups/' + g.id);
+        closeModal(); toast('Renamed'); render();
+      });
+    });
+}
+function deleteGroupModal(){
+  var g = S.openGroup;
+  showModal('Delete “' + g.name + '”?',
+    '<p style="margin:0;color:var(--ink-2);font-size:13px">The group is removed from the ' +
+    'list and can no longer be messaged. The ' + n(g.count) + ' people in it are <b>not</b> deleted ' +
+    'and stay in every other group they belong to.</p>',
+    'Delete group', function(){
+      guard(async function(){
+        await API.del('/groups/' + g.id);
+        closeModal(); S.openGroup = null;
+        S.groups = (await API.get('/groups')).groups || [];
+        toast('Group deleted'); render();
+      });
+    });
+}
+
+window.addEventListener('message', BRIDGE.onMessage);
+window.addEventListener('resize', function(){ BRIDGE.measure(); });
+if(window.ResizeObserver)
+  new ResizeObserver(function(){ fitNav(); BRIDGE.measure(); })
+    .observe(document.getElementById('root'));
+
+try { parent.postMessage({source:'hgs-comms', type:'frameLoaded', payload:{}}, '*'); } catch(e){}
+// If no host handshake arrives, boot anyway with defaults. A bare <iframe> with
+// no SDK is the simplest possible integration and must work; when the SDK is
+// present it answers within a few milliseconds, so this grace period never
+// fires first. Also covers the file being opened directly for review.
+setTimeout(function(){
+  if(!S.booted && !S.host) BRIDGE.init({});
+}, 600);
+
+})();
+</script>
+</body>
+</html>

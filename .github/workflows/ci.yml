@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Core checks
+        run: python -m app.test_core
+      - name: Import the app
+        # Catches syntax errors and bad imports in files the unit checks do not
+        # reach, without needing a database.
+        env:
+          DEV_MODE: "1"
+        run: python -c "import app.api, app.worker, app.audience; print('imports ok')"
+
+  schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: comms
+          POSTGRES_PASSWORD: comms
+          POSTGRES_DB: comms
+        options: >-
+          --health-cmd "pg_isready -U comms" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema
+        env:
+          PGPASSWORD: comms
+        run: psql -h localhost -U comms -d comms -v ON_ERROR_STOP=1 -f db/schema.sql
+      - name: Partitions exist
+        env:
+          PGPASSWORD: comms
+        # A missing partition means every insert after midnight fails, so this
+        # is worth asserting rather than assuming.
+        run: |
+          psql -h localhost -U comms -d comms -v ON_ERROR_STOP=1 -c \
+            "SELECT count(*) AS partitions FROM pg_inherits WHERE inhparent = 'delivery'::regclass;" \
+            | tee /tmp/out
+          grep -qE '\s[4-9]|\s[1-9][0-9]' /tmp/out || (echo "expected >=4 daily partitions" && exit 1)
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: church-comms:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
