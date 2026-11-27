@@ -174,6 +174,28 @@ pins this.
 | Inbox query | Partition archiver |
 | Widget + embed SDK | Widget wired to `/v1` (still calls the prototype API) |
 | Docker, compose, CI | |
+| **Esendex wire format, verified live (HTTP 200)** | |
+
+### Esendex wire format — recovered and verified
+
+The shipping sender binds a WCF client by endpoint *name* (`sms2wsHttpBinding`),
+so no repo contains the actual envelope. It was recovered from the live WSDL and
+confirmed with an HTTP 200 from `sms2tls.esendex.us`. Four rejections on the way,
+each now pinned by a test:
+
+| Mistake | What the service says |
+|---|---|
+| SOAP 1.1 envelope, `text/xml` | `HTTP 415` — expects `application/soap+xml` |
+| No WS-Addressing header | `a:ActionMismatch` |
+| Action `ws.cdyne.com/sms/AdvancedSMSsend` | `ContractFilter mismatch` |
+| Fields grouped logically | schema violation |
+
+The real contract: namespace `http://sms2.cdyne.com`, action
+`http://sms2.cdyne.com/Isms/AdvancedSMSsend`, wrapper parameter
+**`AdvancedRequest`** (not `request`), data contract
+`http://schemas.datacontract.org/2004/07/SmsWS`, and **alphabetical field
+order**, because `DataContractSerializer` sorts members. Do not "tidy" that
+order — `test_field_order_is_alphabetical` exists to stop exactly that.
 
 **Auth is the gating item.** Three `AUTH-HOOK` comments mark where it belongs.
 The `token` option is already plumbed through the SDK and handshake, so nothing

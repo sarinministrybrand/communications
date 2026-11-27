@@ -9,11 +9,20 @@ where each `SMSRequest` carries
 One SMSRequest carries up to BATCH recipients, so a 1e9/day send is ~500k
 provider calls, not 1e9. That ratio is the whole reason this is affordable.
 
-CONFIRM BEFORE PRODUCTION: the SOAP namespace and SOAPAction below are the
-documented CDYNE values. The shipping code never writes an envelope by hand --
-it binds a WCF client by the endpoint *name* `sms2wsHttpBinding`, so the wire
-format is generated from the WSDL and is not visible in that repo. Fetch
-`<send_url>?wsdl` once and diff element order before the first live send.
+The wire format is VERIFIED against the live endpoint, not assumed. The shipping
+code never writes an envelope by hand -- it binds a WCF client by the endpoint
+*name* `sms2wsHttpBinding`, so the format is generated from the WSDL and is
+invisible in that repo. It was recovered by reading
+`https://sms2tls.esendex.us/sms.svc?wsdl` plus its `?xsd=xsd0` / `?xsd=xsd2`
+imports, and confirmed with a live HTTP 200.
+
+Four things the service rejects, each found the hard way:
+  1. SOAP 1.1 envelope / `text/xml`      -> HTTP 415 (wsHttpBinding is SOAP 1.2)
+  2. no WS-Addressing Action + To header -> a:ActionMismatch
+  3. action `ws.cdyne.com/sms/...`       -> ContractFilter mismatch
+     (the real one is `sms2.cdyne.com/Isms/...`, portType `Isms`)
+  4. fields in any non-alphabetical order -> schema violation
+     (DataContractSerializer sorts members, so xs:sequence is alphabetical)
 """
 from __future__ import annotations
 
@@ -29,9 +38,33 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-NS = "http://ws.cdyne.com/sms/"
-SOAP_ACTION = "http://ws.cdyne.com/sms/AdvancedSMSsend"
+# All four values below are read from the live WSDL at
+# https://sms2tls.esendex.us/sms.svc?wsdl (and its ?xsd=xsd0 / ?xsd=xsd2
+# imports), not from documentation. Earlier guesses at `ws.cdyne.com/sms/` were
+# wrong and the service rejected them -- see the fault history in the README.
+NS = "http://sms2.cdyne.com"                                   # service contract
+SOAP_ACTION = "http://sms2.cdyne.com/Isms/AdvancedSMSsend"     # portType Isms
+DC_NS = "http://schemas.datacontract.org/2004/07/SmsWS"        # the data contract
 ARRAY_NS = "http://schemas.microsoft.com/2003/10/Serialization/Arrays"
+
+# SOAP 1.2, confirmed against the live endpoint. A SOAP 1.1 envelope
+# (http://schemas.xmlsoap.org/soap/envelope/, text/xml, separate SOAPAction
+# header) is rejected with:
+#   HTTP 415 "Cannot process the message because the content type
+#   'text/xml; charset=utf-8' was not the expected type
+#   'application/soap+xml; charset=utf-8'."
+# This was inferable from the shipping config without asking the provider: the
+# WCF client is built by the binding NAME `sms2wsHttpBinding`, and WCF's
+# wsHttpBinding is SOAP 1.2. In 1.2 the action travels as a Content-Type
+# parameter rather than its own header.
+SOAP_ENV = "http://www.w3.org/2003/05/soap-envelope"
+CONTENT_TYPE = 'application/soap+xml; charset=utf-8; action="' + SOAP_ACTION + '"'
+
+# WS-Addressing 1.0. wsHttpBinding enables it by default, so the Action and To
+# headers are mandatory -- without them the service faults with a:ActionMismatch
+# even when the Content-Type action is correct.
+WSA_NS = "http://www.w3.org/2005/08/addressing"
+DEFAULT_SEND_URL = "https://sms2tls.esendex.us/sms.svc/WS"
 
 # PrimeMessageSender sends one chunk per call; cdyne_sms_batch_size = 2000.
 BATCH = 2000
@@ -64,11 +97,15 @@ def build_envelope(
     postback_url: str,
     assigned_did: str = "",
     scheduled_at: datetime | None = None,
+    to_url: str = DEFAULT_SEND_URL,
 ) -> str:
     """Build one AdvancedSMSsend envelope.
 
     `assigned_did` empty means the shared short code; set means the church's
     dedicated long code, matching `req.AssignedDID` in the shipping sender.
+
+    `to_url` fills the WS-Addressing `To` header and must be the endpoint the
+    request is actually posted to, or the service rejects it.
     """
     if not phones:
         raise ValueError("no recipients")
@@ -80,23 +117,40 @@ def build_envelope(
     is_unicode = "true" if has_unicode(body) else "false"
     concatenate = "true" if len(body) > SINGLE_SEGMENT else "false"
 
+    # Field order below is NOT arbitrary and must not be "tidied". WCF's
+    # DataContractSerializer emits members alphabetically, so the schema's
+    # xs:sequence is alphabetical, and a sequence out of order is rejected:
+    #   SMSAdvancedRequest -> Concatenate, IsUnicode, LicenseKey, SMSRequests
+    #   SMSRequest         -> AssignedDID, Message, PhoneNumbers, ReferenceID,
+    #                         ScheduledDateTime, StatusPostBackURL
+    # The wrapper parameter is `AdvancedRequest`, not `request`.
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
-        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
-        ' xmlns:t="' + NS + '" xmlns:a="' + ARRAY_NS + '">'
-        "<s:Body><t:AdvancedSMSsend><t:request>"
-        "<t:LicenseKey>" + escape(license_key) + "</t:LicenseKey>"
-        "<t:IsUnicode>" + is_unicode + "</t:IsUnicode>"
-        "<t:Concatenate>" + concatenate + "</t:Concatenate>"
-        "<t:SMSRequests><t:SMSRequest>"
-        "<t:Message>" + escape(body) + "</t:Message>"
-        "<t:PhoneNumbers>" + numbers + "</t:PhoneNumbers>"
-        "<t:ScheduledDateTime>" + when.strftime("%Y-%m-%dT%H:%M:%SZ") + "</t:ScheduledDateTime>"
-        "<t:AssignedDID>" + escape(assigned_did) + "</t:AssignedDID>"
-        "<t:ReferenceID>" + escape(reference_id) + "</t:ReferenceID>"
-        "<t:StatusPostBackURL>" + escape(postback_url) + "</t:StatusPostBackURL>"
-        "</t:SMSRequest></t:SMSRequests>"
-        "</t:request></t:AdvancedSMSsend></s:Body></s:Envelope>"
+        '<s:Envelope xmlns:s="' + SOAP_ENV + '" xmlns:w="' + WSA_NS + '">'
+        # WS-Addressing header. wsHttpBinding turns this on by default, and the
+        # service refuses the message without it:
+        #   a:ActionMismatch -- "The SOAP action specified on the message, '',
+        #   does not match the HTTP SOAP Action".
+        # mustUnderstand="1" is what the service's own fault envelope uses.
+        "<s:Header>"
+        '<w:Action s:mustUnderstand="1">' + SOAP_ACTION + "</w:Action>"
+        '<w:To s:mustUnderstand="1">' + escape(to_url) + "</w:To>"
+        "</s:Header>"
+        "<s:Body>"
+        '<AdvancedSMSsend xmlns="' + NS + '">'
+        '<AdvancedRequest xmlns:d="' + DC_NS + '">'
+        "<d:Concatenate>" + concatenate + "</d:Concatenate>"
+        "<d:IsUnicode>" + is_unicode + "</d:IsUnicode>"
+        "<d:LicenseKey>" + escape(license_key) + "</d:LicenseKey>"
+        "<d:SMSRequests><d:SMSRequest>"
+        "<d:AssignedDID>" + escape(assigned_did) + "</d:AssignedDID>"
+        "<d:Message>" + escape(body) + "</d:Message>"
+        '<d:PhoneNumbers xmlns:a="' + ARRAY_NS + '">' + numbers + "</d:PhoneNumbers>"
+        "<d:ReferenceID>" + escape(reference_id) + "</d:ReferenceID>"
+        "<d:ScheduledDateTime>" + when.strftime("%Y-%m-%dT%H:%M:%SZ") + "</d:ScheduledDateTime>"
+        "<d:StatusPostBackURL>" + escape(postback_url) + "</d:StatusPostBackURL>"
+        "</d:SMSRequest></d:SMSRequests>"
+        "</AdvancedRequest></AdvancedSMSsend></s:Body></s:Envelope>"
     )
 
 
@@ -175,8 +229,12 @@ class EsendexClient:
             reference_id=reference_id,
             postback_url=self.postback_url,
             assigned_did=assigned_did,
+            # WS-Addressing To must equal the URL we actually post to.
+            to_url=self.send_url,
         )
-        headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": SOAP_ACTION}
+        # SOAP 1.2 carries the action inside Content-Type; sending a separate
+        # SOAPAction header alongside it is what 1.1 does and is refused here.
+        headers = {"Content-Type": CONTENT_TYPE}
 
         last = "not attempted"
         for attempt in range(1, attempts + 1):

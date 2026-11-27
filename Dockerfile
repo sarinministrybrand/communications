@@ -1,4 +1,6 @@
-# syntax=docker/dockerfile:1.7
+# No `# syntax=` directive on purpose: it makes BuildKit pull a frontend image
+# on every build, which fails on restricted networks, and nothing here needs a
+# feature newer than the built-in frontend.
 # Multi-stage so the runtime image carries no build toolchain.
 FROM python:3.12-slim AS deps
 WORKDIR /app

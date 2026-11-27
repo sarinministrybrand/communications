@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from app.audience import chunked
 from app.esendex import (
+    ARRAY_NS,
     BATCH,
+    CONTENT_TYPE,
+    DC_NS,
+    NS,
+    SOAP_ACTION,
+    SOAP_ENV,
+    WSA_NS,
     build_envelope,
     classify_inbound,
     has_unicode,
@@ -23,7 +30,14 @@ from app.esendex import (
 KEY = "11111111-2222-3333-4444-555555555555"
 
 
-def test_envelope_shape() -> None:
+def test_envelope_matches_the_wsdl() -> None:
+    """Every value here was read from https://sms2tls.esendex.us/sms.svc?wsdl
+    and confirmed with a live HTTP 200. Changing any of them breaks every send,
+    and the failure is a SOAP fault, not an obvious error."""
+    assert NS == "http://sms2.cdyne.com"
+    assert SOAP_ACTION == "http://sms2.cdyne.com/Isms/AdvancedSMSsend"
+    assert DC_NS == "http://schemas.datacontract.org/2004/07/SmsWS"
+
     xml = build_envelope(
         license_key=KEY,
         body="Rehearsal moved to 7pm.",
@@ -31,23 +45,62 @@ def test_envelope_shape() -> None:
         reference_id="b42-0",
         postback_url="https://example.test/webhooks/esendex",
         assigned_did="+15135559999",
+        to_url="https://sms2tls.esendex.us/sms.svc/WS",
     )
-    # Every field the shipping sender sets must be present.
-    for field in (
-        "LicenseKey",
-        "IsUnicode",
-        "Concatenate",
-        "SMSRequests",
-        "Message",
-        "PhoneNumbers",
-        "ScheduledDateTime",
-        "AssignedDID",
-        "ReferenceID",
-        "StatusPostBackURL",
-    ):
-        assert f"<t:{field}>" in xml, f"envelope is missing {field}"
+    # The wrapper parameter is AdvancedRequest. Calling it "request" earns a
+    # ContractFilter mismatch at the EndpointDispatcher.
+    assert "<AdvancedRequest" in xml
+    assert '<AdvancedSMSsend xmlns="http://sms2.cdyne.com">' in xml
+    assert DC_NS in xml and ARRAY_NS in xml
     assert xml.count("<a:string>") == 2
     assert "+15135559999" in xml
+
+
+def test_ws_addressing_header_present() -> None:
+    """wsHttpBinding enables WS-Addressing, so Action and To are mandatory.
+    Without them: a:ActionMismatch, HTTP 500."""
+    xml = build_envelope(
+        license_key=KEY, body="hi", phones=["1"], reference_id="r",
+        postback_url="u", to_url="https://sms2tls.esendex.us/sms.svc/WS",
+    )
+    assert WSA_NS in xml
+    assert "<s:Header>" in xml
+    assert '<w:Action s:mustUnderstand="1">' + SOAP_ACTION + "</w:Action>" in xml
+    assert "https://sms2tls.esendex.us/sms.svc/WS</w:To>" in xml
+
+
+def test_field_order_is_alphabetical() -> None:
+    """DataContractSerializer emits members alphabetically, so the schema's
+    xs:sequence is alphabetical too and the service rejects any other order.
+
+    This is the check most likely to be "cleaned up" by someone grouping the
+    fields logically. Do not. The order is the contract.
+    """
+    xml = build_envelope(
+        license_key=KEY, body="hi", phones=["1"], reference_id="r",
+        postback_url="u", assigned_did="+1555",
+    )
+    outer = ["Concatenate", "IsUnicode", "LicenseKey", "SMSRequests"]
+    inner = ["AssignedDID", "Message", "PhoneNumbers", "ReferenceID",
+             "ScheduledDateTime", "StatusPostBackURL"]
+    for seq in (outer, inner):
+        at = [xml.index("<d:" + f) for f in seq]
+        assert at == sorted(at), f"{seq} must appear in this order; got {at}"
+
+
+def test_envelope_is_soap_12() -> None:
+    """The live endpoint rejects SOAP 1.1 with HTTP 415. Confirmed, not guessed:
+    `sms2wsHttpBinding` is WCF wsHttpBinding, which is SOAP 1.2. If anyone
+    "simplifies" this back to text/xml, every send fails."""
+    xml = build_envelope(
+        license_key=KEY, body="hi", phones=["1"], reference_id="r", postback_url="u"
+    )
+    assert SOAP_ENV == "http://www.w3.org/2003/05/soap-envelope"
+    assert SOAP_ENV in xml
+    assert "schemas.xmlsoap.org/soap/envelope" not in xml, "that is SOAP 1.1, refused with 415"
+    assert CONTENT_TYPE.startswith("application/soap+xml")
+    # In 1.2 the action rides in Content-Type, not a SOAPAction header.
+    assert 'action="' + SOAP_ACTION + '"' in CONTENT_TYPE
 
 
 def test_envelope_flags() -> None:
@@ -55,20 +108,20 @@ def test_envelope_flags() -> None:
         license_key=KEY, body="x" * 100, phones=["1"], reference_id="r",
         postback_url="u",
     )
-    assert "<t:Concatenate>false</t:Concatenate>" in short
-    assert "<t:IsUnicode>false</t:IsUnicode>" in short
+    assert "<d:Concatenate>false</d:Concatenate>" in short
+    assert "<d:IsUnicode>false</d:IsUnicode>" in short
 
     long = build_envelope(
         license_key=KEY, body="x" * 200, phones=["1"], reference_id="r",
         postback_url="u",
     )
-    assert "<t:Concatenate>true</t:Concatenate>" in long
+    assert "<d:Concatenate>true</d:Concatenate>" in long
 
     emoji = build_envelope(
         license_key=KEY, body="See you Sunday ❤", phones=["1"], reference_id="r",
         postback_url="u",
     )
-    assert "<t:IsUnicode>true</t:IsUnicode>" in emoji
+    assert "<d:IsUnicode>true</d:IsUnicode>" in emoji
 
 
 def test_envelope_escapes_and_bounds() -> None:

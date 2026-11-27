@@ -1,4 +1,4 @@
-name: church-comms
+name: communications
 
 services:
   db:
@@ -16,8 +16,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    ports:
-      - "5432:5432"
 
   redis:
     image: redis:7-alpine
@@ -31,8 +29,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    ports:
-      - "6379:6379"
 
   api:
     build: .
