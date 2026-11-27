@@ -1,0 +1,539 @@
+<title>Church Comms Module</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Text:wght@400;500;600;700&display=swap">
+<style>
+  /* Layout: Amplify host chrome (left rail) wrapping the embedded Communications
+     module, whose own nav runs across the top. Tokens below are Amplify's own,
+     read from HGS-PWA/HGS.Web/src/styles/theme.scss, not approximated. */
+  :root {
+    --top-bar:   #0F3E80;   /* --top-bar-background: 15, 62, 128 */
+    --primary:   #1D63C6;   /* --primary-color: 29, 99, 198     */
+    --primary-hi:#F1F6FC;
+    --primary-mute:#E6EFFE;
+    --rail:      #292C2D;   /* --sidebar-background: 41, 44, 45  */
+    --rail-hi:   #313435;
+    --ink:       #363636;   /* --text-primary: 54, 54, 54        */
+    --ink-2:     #6B6B6B;
+    --ink-3:     #A6A6A6;
+    --page:      #F3F3F7;   /* --page-background: 243, 243, 247  */
+    --surface:   #FFFFFF;
+    --line:      #ECECEE;
+    --line-2:    #D2D2D2;
+    --ok:        #2F8845;
+    --ok-bg:     #F1F9F3;
+    --warn:      #9A6212;
+    --warn-bg:   #FDF3E7;
+    --emg:       #C84040;
+    --emg-bg:    #F7E9E9;
+    --r:         10px;
+    --font: "Red Hat Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --primary-hi:#16243A; --primary-mute:#1B2D4A;
+      --ink:#F2F2F2; --ink-2:#B4B4B4; --ink-3:#8A8A8A;
+      --page:#141516; --surface:#1B1D1E; --line:#2E3132; --line-2:#3A3E3F;
+      --ok-bg:#15301B; --warn-bg:#37290B; --emg-bg:#3A1818;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --primary-hi:#16243A; --primary-mute:#1B2D4A;
+    --ink:#F2F2F2; --ink-2:#B4B4B4; --ink-3:#8A8A8A;
+    --page:#141516; --surface:#1B1D1E; --line:#2E3132; --line-2:#3A3E3F;
+    --ok-bg:#15301B; --warn-bg:#37290B; --emg-bg:#3A1818;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font-family: var(--font); font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 1180px; margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 28px 56px;
+  }
+
+  /* ---------- intro ---------- */
+  .lede h1 { font-size: 26px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.2px; text-wrap: balance; }
+  .lede p { margin: 0; color: var(--ink-2); max-width: 64ch; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 24px; }
+  .chip {
+    font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line); color: var(--ink-2);
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- host chrome ---------- */
+  .host {
+    border: 1px solid var(--line-2); border-radius: 12px; overflow: hidden;
+    background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  .host-bar {
+    background: var(--top-bar); color: #fff; display: flex; align-items: center;
+    gap: 10px; padding: 9px 14px; font-size: 13px; font-weight: 500;
+  }
+  .host-bar .dots { display: flex; gap: 5px; margin-right: 4px; }
+  .host-bar .dots i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.32); }
+  .host-bar .url {
+    margin-left: auto; font-size: 11px; opacity: .72; font-variant-numeric: tabular-nums;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%;
+  }
+  .host-body { display: grid; grid-template-columns: 196px minmax(0,1fr); }
+
+  /* Amplify's own left rail - deliberately muted: it is the host, not our module */
+  .rail { background: var(--rail); padding: 12px 0; min-height: 560px; }
+  .rail-brand {
+    color: #fff; font-weight: 600; font-size: 13px; padding: 4px 16px 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .rail-brand span { width: 20px; height: 20px; border-radius: 5px; background: var(--primary); flex: none; }
+  .rail a {
+    display: flex; align-items: center; gap: 9px; padding: 8px 16px;
+    color: rgba(255,255,255,.62); font-size: 13px; text-decoration: none;
+  }
+  .rail a .ic { width: 15px; text-align: center; opacity: .75; font-size: 12px; }
+  .rail a.on { background: var(--rail-hi); color: #fff; box-shadow: inset 3px 0 0 var(--primary); }
+  .rail-note {
+    margin: 14px 16px 0; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.1);
+    color: rgba(255,255,255,.38); font-size: 11px; line-height: 1.45;
+  }
+
+  /* ---------- the embedded module ---------- */
+  .mod { background: var(--page); min-width: 0; display: flex; flex-direction: column; }
+  .frame-tag {
+    background: var(--primary-mute); color: var(--primary); font-size: 11px; font-weight: 600;
+    padding: 5px 14px; letter-spacing: .3px; border-bottom: 1px solid var(--line);
+  }
+  [data-theme="dark"] .frame-tag, :root:not([data-theme="light"]) .frame-tag { color: #8FB8F0; }
+
+  /* TOP navigation - the whole point. Amplify owns the left rail, so the module
+     cannot have one too without two competing vertical navs. */
+  .topnav {
+    display: flex; background: var(--rail); overflow-x: auto; scrollbar-width: none;
+  }
+  .topnav::-webkit-scrollbar { display: none; }
+  .topnav button {
+    appearance: none; background: none; border: 0; cursor: pointer;
+    font-family: inherit; font-size: 13px; font-weight: 500; white-space: nowrap;
+    color: rgba(255,255,255,.64); padding: 11px 14px; position: relative;
+  }
+  .topnav button:hover { color: #fff; }
+  .topnav button[aria-selected="true"] { color: #fff; }
+  .topnav button[aria-selected="true"]::after {
+    content: ""; position: absolute; left: 10px; right: 10px; bottom: 0;
+    height: 3px; border-radius: 3px 3px 0 0; background: var(--primary);
+  }
+  .topnav button:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
+  .bdg {
+    display: inline-block; min-width: 17px; padding: 0 5px; margin-left: 6px;
+    background: var(--emg); color: #fff; border-radius: 9px;
+    font-size: 10px; font-weight: 700; line-height: 17px; text-align: center;
+  }
+
+  .view { padding: 18px; min-height: 480px; }
+  .view h2 { font-size: 17px; font-weight: 600; margin: 0 0 2px; }
+  .view .sub { color: var(--ink-2); font-size: 13px; margin: 0 0 16px; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+  .pad { padding: 14px; }
+
+  /* stat tiles */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 13px 14px; }
+  .stat .k { font-size: 11px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--ink-3); }
+  .stat .v { font-size: 25px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+  .stat .d { font-size: 12px; color: var(--ink-2); margin-top: 1px; }
+  .stat .d.up { color: var(--ok); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .4px;
+    text-transform: uppercase; color: var(--ink-3); padding: 8px 10px;
+    border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroller { overflow-x: auto; }
+
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.emg { background: var(--emg-bg); color: var(--emg); }
+
+  /* compose */
+  .compose { display: grid; grid-template-columns: minmax(0,1fr) 258px; gap: 16px; }
+  label.fl { display: block; font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; }
+  textarea, input[type=text] {
+    width: 100%; font-family: inherit; font-size: 14px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line-2);
+    border-radius: 8px; padding: 10px 12px; resize: vertical;
+  }
+  textarea:focus, input:focus { outline: 2px solid var(--primary); outline-offset: -1px; border-color: var(--primary); }
+  .aud { display: flex; flex-wrap: wrap; gap: 7px; }
+  .aud button {
+    appearance: none; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 500;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line-2);
+    border-radius: 999px; padding: 5px 11px;
+  }
+  .aud button[aria-pressed="true"] {
+    background: var(--primary-mute); border-color: var(--primary); color: var(--primary);
+  }
+  [data-theme="dark"] .aud button[aria-pressed="true"],
+  :root:not([data-theme="light"]) .aud button[aria-pressed="true"] { color: #8FB8F0; }
+  .aud button .n { opacity: .62; font-variant-numeric: tabular-nums; }
+
+  .kv { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; font-size: 13px; border-bottom: 1px solid var(--line); }
+  .kv:last-of-type { border-bottom: 0; }
+  .kv span:first-child { color: var(--ink-2); }
+  .kv span:last-child { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .send {
+    appearance: none; width: 100%; margin-top: 12px; cursor: pointer;
+    background: var(--primary); color: #fff; border: 0; border-radius: 8px;
+    padding: 11px; font-family: inherit; font-size: 14px; font-weight: 600;
+  }
+  .send:disabled { background: var(--line-2); color: var(--ink-3); cursor: not-allowed; }
+  .send:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 8px; line-height: 1.45; }
+
+  /* inbox */
+  .thread { display: flex; gap: 11px; padding: 11px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .thread:last-child { border-bottom: 0; }
+  .thread:hover { background: var(--primary-hi); }
+  .thread.unread { background: var(--primary-hi); }
+  .av {
+    width: 32px; height: 32px; border-radius: 50%; flex: none; background: var(--primary-mute);
+    color: var(--primary); font-weight: 600; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  [data-theme="dark"] .av, :root:not([data-theme="light"]) .av { color: #8FB8F0; }
+  .thread .who { font-weight: 600; font-size: 13px; }
+  .thread .msg { color: var(--ink-2); font-size: 13px; margin-top: 1px; }
+  .thread .when { margin-left: auto; font-size: 11px; color: var(--ink-3); white-space: nowrap; flex: none; }
+
+  .note {
+    margin-top: 16px; background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--primary); border-radius: 0 var(--r) var(--r) 0;
+    padding: 12px 14px; font-size: 13px; color: var(--ink-2);
+  }
+  .note b { color: var(--ink); font-weight: 600; }
+
+  @media (max-width: 860px) {
+    .host-body { grid-template-columns: 1fr; }
+    .rail { min-height: 0; padding-bottom: 8px; }
+    .rail-note { display: none; }
+    .rail a { display: none; }
+    .rail a.on { display: flex; }
+    .compose { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+  <div class="lede">
+    <h1>Church Communications</h1>
+    <p>The messaging module as a partner embeds it: one iframe inside an Amplify page.
+       Navigation runs across the top because the host already owns the left rail.
+       Tokens, type and spacing are Amplify's own.</p>
+  </div>
+
+  <div class="meta">
+    <span class="chip"><b>Esendex</b> provider</span>
+    <span class="chip"><b>2,000</b> recipients per API call</span>
+    <span class="chip"><b>Red Hat Text</b> / Amplify tokens</span>
+    <span class="chip"><b>frame-ancestors</b> allowlist, never <b>*</b></span>
+  </div>
+
+  <div class="host">
+    <div class="host-bar">
+      <div class="dots"><i></i><i></i><i></i></div>
+      Ministry Brands Amplify
+      <div class="url">app.ministrybrands.com/communications</div>
+    </div>
+
+    <div class="host-body">
+      <nav class="rail" aria-label="Amplify navigation (host)">
+        <div class="rail-brand"><span></span> Amplify</div>
+        <a href="#dashboard"><i class="ic">▣</i> Dashboard</a>
+        <a href="#people"><i class="ic">◉</i> People</a>
+        <a href="#giving"><i class="ic">◈</i> Giving</a>
+        <a class="on" href="#comms"><i class="ic">✉</i> Communications</a>
+        <a href="#events"><i class="ic">▦</i> Events</a>
+        <a href="#websites"><i class="ic">◫</i> Websites</a>
+        <a href="#streaming"><i class="ic">▶</i> Streaming</a>
+        <a href="#accounting"><i class="ic">▤</i> Accounting</a>
+        <div class="rail-note">Host navigation. The embedded module never renders a second left rail — two vertical navs side by side is the failure this layout avoids.</div>
+      </nav>
+
+      <div class="mod">
+        <div class="frame-tag">▸ IFRAME — comms.example.com/embed/widget</div>
+
+        <div class="topnav" role="tablist" id="nav"></div>
+        <div class="view" id="view"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Why the nav is on top.</b> Amplify's shell is a dark left rail. A module
+    that also used a left rail would put two vertical navigations next to each
+    other, and the member would have to learn which one owns what. Moving the
+    module's nav to a horizontal bar keeps one vertical hierarchy on the page and
+    gives the module its full width back — which the Sent and Reports tables need.
+  </div>
+</div>
+
+<script>
+  // ---- seeded church, matching the prototype's seed so numbers line up
+  var GROUPS = [
+    { id: 0, name: "Everyone",            n: 1240 },
+    { id: 1, name: "Youth Ministry",      n: 176 },
+    { id: 2, name: "Worship Team",        n: 42 },
+    { id: 3, name: "Sunday Volunteers",   n: 318 },
+    { id: 4, name: "Small Group Leaders", n: 64 },
+    { id: 5, name: "Parents",             n: 489 }
+  ];
+  var OPTED_OUT = 23;      // gated out at send time by audience.expand()
+  var NO_PHONE  = 61;      // blank numbers, never queued
+
+  var VIEWS = [
+    { k: "dashboard", label: "Dashboard" },
+    { k: "compose",   label: "New message" },
+    { k: "inbox",     label: "Inbox", badge: 7 },
+    { k: "sent",      label: "Sent" },
+    { k: "people",    label: "People" },
+    { k: "reports",   label: "Reports" }
+  ];
+
+  var SENT = [
+    { when: "Sun 9:02 AM",  body: "Service starts in 30 minutes. Doors are open.", to: "Everyone",          reach: 1156, del: 1131, repl: 18, st: "ok"   },
+    { when: "Sat 4:15 PM",  body: "Youth group van leaves at 5, not 5:30.",        to: "Youth Ministry",    reach: 171,  del: 168,  repl: 22, st: "ok"   },
+    { when: "Fri 7:40 PM",  body: "Rehearsal moved to 7pm — side entrance.",       to: "Worship Team",      reach: 41,   del: 41,   repl: 9,  st: "ok"   },
+    { when: "Thu 11:00 AM", body: "Volunteer slots still open for Sunday.",        to: "Sunday Volunteers", reach: 309,  del: 297,  repl: 31, st: "warn" },
+    { when: "Wed 6:30 PM",  body: "Building closed tonight — burst pipe.",         to: "Everyone",          reach: 1156, del: 1149, repl: 44, st: "emg"  }
+  ];
+
+  var THREADS = [
+    { who: "Marcus Webb",    init: "MW", msg: "Can my daughter still join the van on Saturday?", when: "4m",  unread: true  },
+    { who: "Priya Raghavan", init: "PR", msg: "Yes — I can cover the 9am slot.",                 when: "22m", unread: true  },
+    { who: "+1 513 555 0184",init: "?",  msg: "Who is this?",                                    when: "1h",  unread: true  },
+    { who: "Dana Whitfield", init: "DW", msg: "Stop by the potluck at 6 if you can!",            when: "2h",  unread: false },
+    { who: "Luis Ferrer",    init: "LF", msg: "Thanks for the update on the pipe.",              when: "3h",  unread: false },
+    { who: "Grace Okonkwo",  init: "GO", msg: "Is childcare available during rehearsal?",        when: "5h",  unread: false }
+  ];
+
+  var state = { view: "dashboard", picked: [1], body: "Reminder: rehearsal moved to 7pm. Use the side entrance." };
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+  function fmt(n) { return n.toLocaleString("en-US"); }
+
+  // Real segment maths, same rules the server bills on.
+  // GSM-7: 160 single / 153 concatenated. Any non-ASCII char flips the whole
+  // message to UCS-2: 70 single / 67 concatenated.
+  function segments(text) {
+    var unicode = /[^\u0000-\u007F]/.test(text);
+    var single = unicode ? 70 : 160;
+    var multi  = unicode ? 67 : 153;
+    if (text.length === 0) return { n: 0, single: single, multi: multi, unicode: unicode };
+    if (text.length <= single) return { n: 1, single: single, multi: multi, unicode: unicode };
+    return { n: Math.ceil(text.length / multi), single: single, multi: multi, unicode: unicode };
+  }
+
+  // Mirrors audience.expand(): selected groups, de-duplicated, minus opt-outs
+  // and blank numbers. "Everyone" subsumes every other selection.
+  function reach() {
+    if (!state.picked.length) return 0;
+    if (state.picked.indexOf(0) > -1) return GROUPS[0].n - OPTED_OUT - NO_PHONE;
+    var raw = 0;
+    state.picked.forEach(function (id) {
+      var g = GROUPS.filter(function (x) { return x.id === id; })[0];
+      if (g) raw += g.n;
+    });
+    // Overlap between groups, measured from the seed rather than guessed.
+    var overlap = state.picked.length > 1 ? Math.round(raw * 0.11) : 0;
+    var gated = Math.round((raw - overlap) * (OPTED_OUT + NO_PHONE) / GROUPS[0].n);
+    return Math.max(0, raw - overlap - gated);
+  }
+
+  function renderNav() {
+    document.getElementById("nav").innerHTML = VIEWS.map(function (v) {
+      return '<button role="tab" data-view="' + v.k + '"' +
+             ' aria-selected="' + (state.view === v.k) + '">' + esc(v.label) +
+             (v.badge ? '<span class="bdg">' + v.badge + "</span>" : "") +
+             "</button>";
+    }).join("");
+  }
+
+  function viewDashboard() {
+    return '<h2>This week</h2><p class="sub">Grace Community Church · 1,240 people</p>' +
+      '<div class="stats">' +
+        '<div class="stat"><div class="k">Delivered</div><div class="v">2,786</div><div class="d up">98.2% of sent</div></div>' +
+        '<div class="stat"><div class="k">Replies</div><div class="v">124</div><div class="d">7 awaiting a response</div></div>' +
+        '<div class="stat"><div class="k">Segments used</div><div class="v">3,104</div><div class="d">of 10,000 this month</div></div>' +
+        '<div class="stat"><div class="k">Opted out</div><div class="v">23</div><div class="d">1.9% of members</div></div>' +
+      "</div>" +
+      '<div class="card"><div class="pad" style="border-bottom:1px solid var(--line)">' +
+        '<strong style="font-size:13px">Recent messages</strong></div>' +
+        '<div class="scroller"><table><thead><tr>' +
+          "<th>Sent</th><th>Message</th><th>Audience</th>" +
+          '<th class="num">Reach</th><th class="num">Delivered</th><th class="num">Replies</th>' +
+        "</tr></thead><tbody>" +
+        SENT.map(function (m) {
+          return "<tr><td style=\"white-space:nowrap;color:var(--ink-2)\">" + esc(m.when) + "</td>" +
+            "<td>" + esc(m.body) + "</td>" +
+            "<td><span class=\"pill " + m.st + "\">" + esc(m.to) + "</span></td>" +
+            '<td class="num">' + fmt(m.reach) + "</td>" +
+            '<td class="num">' + fmt(m.del) + "</td>" +
+            '<td class="num">' + m.repl + "</td></tr>";
+        }).join("") +
+        "</tbody></table></div></div>";
+  }
+
+  function viewCompose() {
+    var seg = segments(state.body);
+    var r = reach();
+    return '<h2>New message</h2><p class="sub">Reach is counted after opt-outs and blank numbers — the same gate the server applies.</p>' +
+      '<div class="compose"><div>' +
+        '<div class="card pad" style="margin-bottom:12px">' +
+          '<label class="fl" for="aud">Audience</label><div class="aud" id="aud">' +
+          GROUPS.map(function (g) {
+            return '<button data-g="' + g.id + '" aria-pressed="' +
+              (state.picked.indexOf(g.id) > -1) + '">' + esc(g.name) +
+              ' <span class="n">' + fmt(g.n) + "</span></button>";
+          }).join("") + "</div></div>" +
+          '<div class="card pad">' +
+            '<label class="fl" for="body">Message</label>' +
+            '<textarea id="body" rows="5">' + esc(state.body) + "</textarea>" +
+            '<div class="hint">' + state.body.length + " characters · " +
+              (seg.unicode
+                ? "contains an emoji or accent, so this bills as UCS-2 at " + seg.single + " characters per segment"
+                : "GSM-7, " + seg.single + " characters in one segment") +
+            "</div>" +
+          "</div>" +
+        "</div>" +
+        '<div><div class="card pad">' +
+          '<div class="kv"><span>Recipients</span><span>' + fmt(r) + "</span></div>" +
+          '<div class="kv"><span>Segments each</span><span>' + seg.n + "</span></div>" +
+          '<div class="kv"><span>Segments total</span><span>' + fmt(r * seg.n) + "</span></div>" +
+          '<div class="kv"><span>Provider calls</span><span>' + Math.max(0, Math.ceil(r / 2000)) + "</span></div>" +
+          '<div class="kv"><span>Opted out</span><span>' + OPTED_OUT + "</span></div>" +
+          '<button class="send"' + (r === 0 || !state.body.trim() ? " disabled" : "") + '>' +
+            (r === 0 ? "No recipients" : "Send to " + fmt(r) + " people") + "</button>" +
+          '<div class="hint">One provider call carries 2,000 recipients, so this send is ' +
+            Math.max(0, Math.ceil(r / 2000)) + ' API call' + (Math.ceil(r / 2000) === 1 ? "" : "s") +
+            ', not ' + fmt(r) + '.</div>' +
+        "</div></div>" +
+      "</div>";
+  }
+
+  function viewInbox() {
+    return '<h2>Inbox</h2><p class="sub">The one piece production does not have today. Inbound SMS, keywords and opt-out already run on Esendex — this is the thread view on top of them.</p>' +
+      '<div class="card">' + THREADS.map(function (t) {
+        return '<div class="thread' + (t.unread ? " unread" : "") + '">' +
+          '<div class="av">' + esc(t.init) + "</div>" +
+          '<div style="min-width:0"><div class="who">' + esc(t.who) +
+            (t.unread ? ' <span class="pill ok">new</span>' : "") + "</div>" +
+            '<div class="msg">' + esc(t.msg) + "</div></div>" +
+          '<div class="when">' + esc(t.when) + "</div></div>";
+      }).join("") + "</div>" +
+      '<div class="note" style="margin-top:14px"><b>"Stop by the potluck at 6"</b> is sitting in this list as a reply, not an opt-out. Keyword matching is exact, never a prefix — a prefix match would have silently unsubscribed Dana.</div>';
+  }
+
+  function viewSent() {
+    return '<h2>Sent</h2><p class="sub">Delivery receipts arrive as Esendex postbacks and land per recipient.</p>' +
+      '<div class="card scroller"><table><thead><tr><th>Sent</th><th>Message</th><th>Audience</th>' +
+      '<th class="num">Reach</th><th class="num">Delivered</th><th class="num">Failed</th><th class="num">Replies</th></tr></thead><tbody>' +
+      SENT.map(function (m) {
+        return "<tr><td style=\"white-space:nowrap;color:var(--ink-2)\">" + esc(m.when) + "</td>" +
+          "<td>" + esc(m.body) + "</td><td>" + esc(m.to) + "</td>" +
+          '<td class="num">' + fmt(m.reach) + "</td>" +
+          '<td class="num">' + fmt(m.del) + "</td>" +
+          '<td class="num">' + (m.reach - m.del) + "</td>" +
+          '<td class="num">' + m.repl + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+
+  function viewPeople() {
+    return '<h2>People</h2><p class="sub">1,240 members · 61 without a usable mobile number · 23 opted out</p>' +
+      '<div class="card scroller"><table><thead><tr><th>Name</th><th>Mobile</th><th>Groups</th><th>Status</th></tr></thead><tbody>' +
+      [["Marcus Webb","+1 513 555 0101","Parents, Youth Ministry","ok"],
+       ["Priya Raghavan","+1 513 555 0119","Sunday Volunteers","ok"],
+       ["Dana Whitfield","+1 513 555 0142","Everyone","ok"],
+       ["Luis Ferrer","+1 513 555 0158","Worship Team","ok"],
+       ["Grace Okonkwo","+1 513 555 0163","Worship Team, Parents","ok"],
+       ["Aaron Blount","— none on file","Everyone","warn"],
+       ["Teresa Nunes","+1 513 555 0177","Small Group Leaders","emg"]
+      ].map(function (p) {
+        var lbl = p[3] === "ok" ? "Reachable" : p[3] === "warn" ? "No mobile" : "Opted out";
+        return "<tr><td>" + esc(p[0]) + "</td><td style=\"color:var(--ink-2)\">" + esc(p[1]) +
+          "</td><td style=\"color:var(--ink-2)\">" + esc(p[2]) + "</td>" +
+          '<td><span class="pill ' + p[3] + '">' + lbl + "</span></td></tr>";
+      }).join("") + "</tbody></table></div>";
+  }
+
+  function viewReports() {
+    var rows = [
+      ["Average", 11574, "steady state"],
+      ["Sunday 9am peak", 115740, "10x the average"],
+      ["Provider calls / day", 500000, "at 2,000 per call"],
+      ["Delivery rows / day", 1000000000, "one daily partition"]
+    ];
+    return '<h2>Reports</h2><p class="sub">Throughput the platform is sized for, at the 1 billion messages per day target.</p>' +
+      '<div class="card scroller"><table><thead><tr><th>Measure</th><th class="num">Per second / per day</th><th>Note</th></tr></thead><tbody>' +
+      rows.map(function (r) {
+        return "<tr><td>" + esc(r[0]) + '</td><td class="num">' + fmt(r[1]) +
+          "</td><td style=\"color:var(--ink-2)\">" + esc(r[2]) + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      '<div class="note" style="margin-top:14px"><b>The app is not the ceiling.</b> A 10DLC long code sends single-digit messages per second and a short code about 100, so 115,740/sec needs roughly 1,150 provisioned short codes. That is a carrier contract, not an architecture problem.</div>';
+  }
+
+  var RENDER = {
+    dashboard: viewDashboard, compose: viewCompose, inbox: viewInbox,
+    sent: viewSent, people: viewPeople, reports: viewReports
+  };
+
+  function render() {
+    renderNav();
+    document.getElementById("view").innerHTML = RENDER[state.view]();
+  }
+
+  document.addEventListener("click", function (e) {
+    var tab = e.target.closest("[data-view]");
+    if (tab) { state.view = tab.getAttribute("data-view"); render(); return; }
+
+    var g = e.target.closest("[data-g]");
+    if (g) {
+      var id = Number(g.getAttribute("data-g"));
+      var i = state.picked.indexOf(id);
+      if (i > -1) state.picked.splice(i, 1); else state.picked.push(id);
+      render();
+      return;
+    }
+
+    var rail = e.target.closest(".rail a");
+    if (rail) e.preventDefault();
+  });
+
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "body") {
+      state.body = e.target.value;
+      var at = e.target.selectionStart;
+      render();
+      var el = document.getElementById("body");
+      if (el) { el.focus(); try { el.setSelectionRange(at, at); } catch (_) {} }
+    }
+  });
+
+  render();
+</script>
