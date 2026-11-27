@@ -329,8 +329,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0
    API
    ========================================================================= */
 var API = {
-  base:'/api',
-  token:null,                 // AUTH: forwarded from the host; service ignores it for now
+  // Served from the same origin as the API, so a relative base keeps the
+  // iframe working without CORS.
+  base:'/v1',
+  token:null,                 // forwarded from the host; verified server-side
   async call(path, opts){
     opts = opts || {};
     var res = await fetch(this.base + path, {

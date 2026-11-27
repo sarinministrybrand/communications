@@ -166,13 +166,13 @@ pins this.
 
 | Working | Not built yet |
 |---|---|
-| Schema with daily partitioning | Real auth (`AUTH-HOOK` in `app/api.py`) |
+| Schema with daily partitioning | Email, voice and push channels |
 | Esendex envelope, parse, retry | Status-writer loop for `comms:status` |
 | Audience expansion + opt-out gate | Reconciler for lost delivery receipts |
 | Broadcast create / status / reach preview | Email and voice channels |
 | Webhook receiver, all three branches | Scheduled-send dispatcher |
 | Inbox query | Partition archiver |
-| Widget + embed SDK | Widget wired to `/v1` (still calls the prototype API) |
+| Widget wired to `/v1` | Automation / journeys |
 | Docker, compose, CI | |
 | **Esendex wire format, verified live (HTTP 200)** | |
 
@@ -197,9 +197,29 @@ The real contract: namespace `http://sms2.cdyne.com`, action
 order**, because `DataContractSerializer` sorts members. Do not "tidy" that
 order — `test_field_order_is_alphabetical` exists to stop exactly that.
 
-**Auth is the gating item.** Three `AUTH-HOOK` comments mark where it belongs.
-The `token` option is already plumbed through the SDK and handshake, so nothing
-about the partner contract changes when it lands.
+### Auth: Unity SSO
+
+Amplify authenticates the caller. The flow mirrors HGS-PWA
+`HGS.Core/UnityService.cs::DecryptUnitySessionKey`: read the `token` claim,
+base64-decode it to `{value, iv, mac}`, verify HMAC-SHA256 over `iv + value`
+with the shared key, AES-decrypt to the Unity session key, then map the Unity
+org to a church through `unity_org_customer`.
+
+**Two deliberate departures from the shipping .NET code.**
+
+1. It sets `RequireSignedTokens = false` while also setting
+   `ValidateIssuer = true` and `ValidateAudience = true`. Those contradict each
+   other: with no signature check, `iss` and `aud` are attacker-supplied
+   strings, so validating them proves nothing. Here the inner HMAC is always
+   enforced and an unsigned outer JWT is refused unless `UNITY_ALLOW_UNSIGNED=1`
+   is set explicitly, which logs a warning on every request.
+2. It compares the HMAC with `!=` on hex strings, which is not constant time.
+   This uses `hmac.compare_digest`.
+
+`current_church` is the only place a church_id enters the system, and it takes
+it from the verified token. Verified with `DEV_MODE=0`: no token, a garbage
+token, and a spoofed `X-Church-Id` all return 401 — the dev header cannot be
+used to bypass auth in production.
 
 ### Local Python note
 

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import db
 from .audience import expand
+from .auth import AuthError, verify_host_token
 from .config import settings
 from .esendex import classify_inbound, postback_kind, resolve_inbound_ids
 
@@ -31,18 +32,44 @@ WEB = pathlib.Path(__file__).resolve().parent.parent / "web"
 
 
 # ------------------------------------------------------------------- auth
-# AUTH-HOOK: replace with real token verification (JWT from the Amplify host,
-# or a partner API key). Everything downstream already takes church_id from
-# this one function, so the rest of the service does not change when it lands.
 async def current_church(
     authorization: str | None = Header(default=None),
     x_church_id: str | None = Header(default=None),
 ) -> int:
+    """Resolve the caller's tenant from the Amplify/Unity host token.
+
+    This is the ONLY place a church_id enters the system. Everything downstream
+    takes it from here and never from a request body or a client-supplied id,
+    so a caller cannot name someone else's tenant.
+
+    Failures are deliberately indistinguishable to the client: a bad signature,
+    a bad inner HMAC and an unmapped organisation all return the same thing.
+    Telling a caller which stage failed helps them tune the next attempt.
+    """
     if settings.dev_mode:
+        # Dev only. compose sets DEV_MODE=1 and a localhost-only embed
+        # allowlist together; both must change for a real deployment.
         return int(x_church_id or 1)
+
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
-    raise HTTPException(501, "token verification not implemented -- see AUTH-HOOK in app/api.py")
+
+    try:
+        identity = verify_host_token(authorization[7:])
+    except AuthError as exc:
+        log.warning("auth rejected: %s", exc)  # detail to the log, never to the caller
+        raise HTTPException(401, "invalid token") from None
+
+    p = await db.pool()
+    async with p.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT church_id FROM unity_org_customer WHERE unity_org_id = $1",
+            identity.org_id,
+        )
+    if row is None:
+        log.warning("auth: Unity org %s is not mapped to a church", identity.org_id)
+        raise HTTPException(403, "organisation is not provisioned for messaging")
+    return int(row["church_id"])
 
 
 # ----------------------------------------------------------------- health
@@ -288,3 +315,11 @@ async def embed_widget() -> Response:
             # omitted: setting it would block every partner. CSP is the control.
         },
     )
+
+
+# ----------------------------------------------------------- widget routes
+# Registered last so they reuse `current_church` above: one auth path, one
+# place a church_id can enter the system.
+from .widget_api import register as _register_widget  # noqa: E402
+
+_register_widget(app, current_church)

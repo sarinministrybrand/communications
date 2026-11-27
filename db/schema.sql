@@ -20,6 +20,18 @@ CREATE TABLE church (
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 
+-- Amplify/Unity -> MyCast tenant bridge. The real system keys these in
+-- `unity_org_customer` (UnityOrgId, CustomerId, PlatformName), per
+-- HGS-PWA Hgs.Amplify.Integration/Services/UnityService.cs. A host token names
+-- a Unity org; this is the only place that turns one into a church_id, so an
+-- unmapped org gets 403 rather than defaulting to any tenant.
+CREATE TABLE unity_org_customer (
+  unity_org_id  text   PRIMARY KEY,
+  church_id     bigint NOT NULL REFERENCES church(id),
+  platform_name text   NOT NULL DEFAULT 'amplify'
+);
+CREATE INDEX unity_org_church ON unity_org_customer (church_id);
+
 CREATE TABLE person (
   id          bigserial PRIMARY KEY,
   church_id   bigint      NOT NULL REFERENCES church(id),
