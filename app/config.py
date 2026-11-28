@@ -47,7 +47,9 @@ class Settings:
     # Hosts allowed to frame the widget. "*" is refused outright: a wildcard
     # here lets any site frame a logged-in church's inbox.
     embed_allowed_origins: list[str] = [
-        o.strip() for o in os.environ.get("EMBED_ALLOWED_ORIGINS", "").split(",") if o.strip()
+        o.strip()
+        for o in os.environ.get("EMBED_ALLOWED_ORIGINS", "").split(",")
+        if o.strip() and "*" not in o  # dropped, so an all-wildcard list refuses to serve
     ]
 
     # --- throughput

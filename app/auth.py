@@ -34,6 +34,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -127,6 +128,25 @@ def _aes_cbc_decrypt(key: str, iv_hex: str, ciphertext_b64: str) -> bytes:
         raise AuthError(f"PKCS7 unpad failed: {exc}") from exc
 
 
+def allow_unsigned() -> bool:
+    """Unsigned tokens are a development aid only. The flag is ignored unless
+    DEV_MODE=1, so it cannot be left on in a real deployment by accident."""
+    return (
+        os.environ.get("UNITY_ALLOW_UNSIGNED", "0") == "1"
+        and os.environ.get("DEV_MODE", "0") == "1"
+    )
+
+
+def check_exp(payload: dict, now: float | None = None, leeway: int = 60) -> None:
+    """Require an unexpired `exp`. A token with no expiry is refused: it would
+    be valid forever once leaked. (The shipping validator sets ValidateLifetime.)"""
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        raise AuthError("JWT has no numeric `exp`")
+    if exp + leeway < (time.time() if now is None else now):
+        raise AuthError("JWT expired")
+
+
 def verify_host_token(token: str) -> Identity:
     """Verify an Amplify/Unity token and return the caller's identity.
 
@@ -137,9 +157,10 @@ def verify_host_token(token: str) -> Identity:
         raise AuthError("empty token")
 
     key = os.environ.get("UNITY_SSO_KEY", "").strip()
-    allow_unsigned = os.environ.get("UNITY_ALLOW_UNSIGNED", "0") == "1"
+    unsigned_ok = allow_unsigned()
 
-    payload = read_jwt(token.strip(), allow_unsigned=allow_unsigned, hmac_key=key or None)
+    payload = read_jwt(token.strip(), allow_unsigned=unsigned_ok, hmac_key=key or None)
+    check_exp(payload)
 
     inner = payload.get("token")
     if not inner:
@@ -176,9 +197,17 @@ def verify_host_token(token: str) -> Identity:
     if not session_key:
         raise AuthError("decrypted session key is empty")
 
-    org_id = pick("OrgId", "OrganizationId", "UnityOrgId") or str(payload.get("org") or "")
+    # The tenant comes ONLY from the signed JWT payload. The inner blob's HMAC
+    # covers iv + value and nothing else, so an OrgId sitting beside them is
+    # attacker-editable: reading it let any valid token name any church.
+    # ponytail: claim name "org" is assumed (PLAN.md Q12); the shipping app gets
+    # the org by validating the session with Unity instead. Swap to that call
+    # once the Unity endpoint and credentials are available.
+    org_id = str(payload.get("org") or "")
+    if not org_id and unsigned_ok:  # dev only: nothing is signed anyway
+        org_id = pick("OrgId", "OrganizationId", "UnityOrgId")
     if not org_id:
-        raise AuthError("no Unity organisation id in the token")
+        raise AuthError("no Unity organisation id in the signed token")
 
     return Identity(
         org_id=org_id,

@@ -6,3 +6,6 @@ venv/
 *.log
 .pytest_cache/
 .DS_Store
+
+# Legacy HGS source: holds provider keys and nested git repos. Never commit.
+Legacy code/

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+from urllib.parse import parse_qsl
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -23,7 +24,7 @@ from . import db
 from .audience import expand
 from .auth import AuthError, verify_host_token
 from .config import settings
-from .esendex import classify_inbound, postback_kind, resolve_inbound_ids
+from .esendex import classify_inbound, postback_kind
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="HGS Church Communications", version="0.1.0")
@@ -238,37 +239,36 @@ async def esendex_postback(request: Request):
       MessageID, SMSResponse, MatchedMessageID, ReferenceID,
       FromPhoneNumber, ToPhoneNumber, Message, ResponseReceiveDate
 
-    Returns 200 on anything parseable. A provider that gets a 4xx retries,
-    and a retry storm during an outage is worse than a dropped receipt -- the
-    reconciler catches genuinely lost receipts.
+    The raw postback is committed to Postgres BEFORE we answer 200 (PLAN.md
+    4.1, rule 5). A STOP that we acknowledged but had only in Redis would be
+    lost by a Redis failover, and the provider does not resend. If the insert
+    fails this returns a 5xx on purpose: an unacknowledged postback can be
+    retried or reconciled, a lost one cannot.
     """
-    try:
-        form = await request.form()
-        params = {k: str(v) for k, v in form.items()}
-    except Exception:
-        params = {}
+    # Parsed with the stdlib. `request.form()` needs python-multipart, which is
+    # not installed, and its failure was swallowed: every form-encoded postback
+    # arrived here as an empty dict.
+    raw = (await request.body()).decode("utf-8", "replace")
+    params = dict(parse_qsl(raw, keep_blank_values=True))
     params.update({k: v for k, v in request.query_params.items() if k not in params})
 
     kind = postback_kind(params)
-    inbound_id, matched_id = resolve_inbound_ids(params)
+    p = await db.pool()
+    async with p.acquire() as conn:
+        postback_id = await conn.fetchval(
+            "INSERT INTO postback (kind, params) VALUES ($1, $2::jsonb) RETURNING id",
+            kind,
+            json.dumps(params),
+        )
 
-    # Hand off to the worker rather than touching Postgres on the provider's
-    # thread: a postback storm must not be able to exhaust the DB pool and take
-    # the partner API down with it.
-    await db.enqueue(
-        db.STATUS_STREAM,
-        kind=kind,
-        inbound_id=inbound_id or "",
-        matched_id=matched_id or "",
-        from_phone=params.get("FromPhoneNumber", ""),
-        to_phone=params.get("ToPhoneNumber", ""),
-        body=params.get("Message", ""),
-        reference_id=params.get("ReferenceID", ""),
-        received_at=params.get("ResponseReceiveDate", ""),
-    )
+    # Wake-up only. The row above is the record; losing this loses nothing.
+    try:
+        await db.enqueue(db.STATUS_STREAM, postback_id=postback_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("postback %s stored; wake-up failed: %s", postback_id, type(exc).__name__)
 
-    if kind == "inbound":
-        log.info("inbound %s from=%s class=%s", inbound_id, params.get("FromPhoneNumber"), classify_inbound(params.get("Message", "")))
+    if kind == "inbound":  # no phone numbers in logs
+        log.info("inbound postback %s class=%s", postback_id, classify_inbound(params.get("Message", "")))
     return JSONResponse({"accepted": True, "kind": kind})
 
 

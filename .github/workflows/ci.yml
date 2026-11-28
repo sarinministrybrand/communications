@@ -21,6 +21,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Core checks
         run: python -m app.test_core
+      - name: Auth checks
+        run: python -m app.test_auth
       - name: Import the app
         # Catches syntax errors and bad imports in files the unit checks do not
         # reach, without needing a database.

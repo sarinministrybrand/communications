@@ -443,6 +443,9 @@ var BRIDGE = {
   },
   onMessage:function(e){
     var d = e.data;
+    // Only the page that frames us may talk to us. frame-ancestors already
+    // limits who that can be; this stops any other window claiming to be it.
+    if(e.source !== window.parent) return;
     if(!d || d.source !== 'hgs-comms-host') return;
     if(d.type === 'init'){
       if(S.host && e.origin !== S.host) return;
@@ -480,7 +483,6 @@ var BRIDGE = {
       return;
     }
     API.token = p.token || null;
-    if(p.apiBase) API.base = p.apiBase;
     if(p.options) Object.assign(S.opts, p.options);
     if(Array.isArray(S.opts.views))
       S.opts.views = S.opts.views.map(viewKey)

@@ -130,6 +130,18 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ---------------------------------------------------------------- postback
+-- Raw provider postbacks, append-only. The webhook commits a row here BEFORE
+-- it answers 200, so a STOP cannot be lost between the provider and us.
+CREATE TABLE postback (
+  id           bigserial PRIMARY KEY,
+  kind         text        NOT NULL,           -- inbound|dlr|accepted|unknown
+  params       jsonb       NOT NULL,
+  received_at  timestamptz NOT NULL DEFAULT now(),
+  processed_at timestamptz
+);
+CREATE INDEX postback_pending ON postback (id) WHERE processed_at IS NULL;
+
 -- ----------------------------------------------------------------- inbound
 -- Every inbound message. Mirrors the live `sms_inbound` table.
 CREATE TABLE inbound (

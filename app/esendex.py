@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -269,26 +270,47 @@ class EsendexClient:
 #   DeliveryReceipt -> handset delivery receipt
 #   SMSResponse     -> an actual inbound reply
 
-STOP_WORDS = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "optout", "opt-out"}
-START_WORDS = {"start", "yes", "unstop", "subscribe", "optin", "opt-in"}
-HELP_WORDS = {"help", "info"}
+# PLAN.md 4.6. "unsub", "block", "arret" are accepted by the legacy handler
+# today, so dropping them would opt people back in on migration.
+STOP_WORDS = {
+    "stop", "stopall", "quit", "end", "revoke", "opt out", "optout",
+    "cancel", "unsubscribe", "unsub", "block", "arret",
+}
+# No "yes"/"subscribe": a poll answer must never re-subscribe someone.
+START_WORDS = {"start", "resume", "unstop"}
+HELP_WORDS = {"help", "hlp", "aide", "info"}
+
+# Words people wrap around an opt-out: "please stop texting me", "STOP ALL".
+_FILLER = {
+    "please", "pls", "plz", "thanks", "thank", "you", "texting", "messaging",
+    "sending", "me", "now", "it", "this", "these", "texts", "messages", "all",
+}
+# Reads like an opt-out but is not one we can act on blindly.
+_LOOKS_LIKE_STOP = re.compile(
+    r"\b(stop|unsubscribe|opt out|remove me|take me off|do ?n[o']?t text|wrong number|no more)\b"
+)
 
 
 def classify_inbound(body: str) -> str:
-    """Carrier-mandated keywords first; everything else is a reply.
+    """Return stop | start | help | review | reply.
 
-    Matched on the whole trimmed body, never as a prefix: "stop by the potluck
-    at 6" is a reply, not an opt-out. A prefix match here silently
-    unsubscribes people, which is both a support burden and a compliance claim
-    you cannot defend.
+    stop:   the whole message is an opt-out word, with or without filler
+            ("STOP", "Stop.", "please stop texting me", "stop all").
+    review: it reads like an opt-out but is not exact ("stop by the potluck at
+            6", "take me off this list"). Never auto-unsubscribe on this, and
+            never ignore it: sends to that handset are held until a person
+            looks (PLAN.md 4.6). Over-holding is the safe error.
     """
-    word = body.strip().lower().strip(".!,?")
-    if word in STOP_WORDS:
-        return "stop"
-    if word in START_WORDS:
+    words = re.findall(r"[a-z']+", body.lower())
+    text = " ".join(words)
+    if text in START_WORDS:
         return "start"
-    if word in HELP_WORDS:
+    if text in HELP_WORDS:
         return "help"
+    if text in STOP_WORDS or " ".join(w for w in words if w not in _FILLER) in STOP_WORDS:
+        return "stop"
+    if _LOOKS_LIKE_STOP.search(text):
+        return "review"
     return "reply"
 
 

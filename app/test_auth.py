@@ -15,7 +15,9 @@ import hmac
 import json
 import os
 
-from app.auth import AuthError, Identity, read_jwt, verify_host_token
+from app.auth import (
+    AuthError, Identity, allow_unsigned, check_exp, read_jwt, verify_host_token,
+)
 
 try:  # AES needs `cryptography`, which has no wheel for Python 3.15 yet.
     import cryptography  # noqa: F401
@@ -30,7 +32,12 @@ def b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def make_jwt(payload: dict, *, alg: str = "HS256", key: str | None = KEY) -> str:
+def make_jwt(
+    payload: dict, *, alg: str = "HS256", key: str | None = KEY, exp: float | None = 4102444800
+) -> str:
+    """exp defaults to the year 2100; pass exp=None for a token with no expiry."""
+    if exp is not None:
+        payload = {"exp": exp, **payload}
     head = b64url(json.dumps({"alg": alg, "typ": "JWT"}).encode())
     body = b64url(json.dumps(payload).encode())
     if alg.upper() == "NONE" or key is None:
@@ -131,12 +138,53 @@ def _session_blob(session_key: str, *, mac: str | None = None) -> str:
 def test_happy_path() -> None:
     os.environ["UNITY_SSO_KEY"] = KEY
     os.environ["UNITY_ALLOW_UNSIGNED"] = "0"
-    tok = make_jwt({"token": _session_blob("sess-abc"), "sub": "user-9", "email": "a@b.test"})
+    tok = make_jwt(
+        {"token": _session_blob("sess-abc"), "sub": "user-9", "email": "a@b.test", "org": "org-signed"}
+    )
     ident = verify_host_token(tok)
     assert isinstance(ident, Identity)
-    assert ident.org_id == "org-123"
+    # From the signed payload, NOT the "org-123" sitting in the unsigned blob.
+    assert ident.org_id == "org-signed"
     assert ident.session_key == "sess-abc"
     assert ident.user_id == "user-9"
+
+
+def test_org_in_unsigned_blob_is_ignored() -> None:
+    """The blob carries OrgId=org-123 but the HMAC does not cover it. With no
+    org in the signed payload the token must be refused, not trusted."""
+    os.environ["UNITY_SSO_KEY"] = KEY
+    os.environ["UNITY_ALLOW_UNSIGNED"] = "0"
+    tok = make_jwt({"token": _session_blob("sess-abc"), "sub": "user-9"})
+    expect(AuthError, lambda: verify_host_token(tok), "org taken from the unsigned blob")
+
+
+def test_expiry_is_enforced() -> None:
+    check_exp({"exp": 1000}, now=1000)            # inside the leeway
+    expect(AuthError, lambda: check_exp({"exp": 1000}, now=2000), "expired token")
+    expect(AuthError, lambda: check_exp({}, now=0), "token with no exp")
+    expect(AuthError, lambda: check_exp({"exp": "never"}, now=0), "non-numeric exp")
+    # ...and it is wired into the real path, before any decryption.
+    os.environ["UNITY_SSO_KEY"] = KEY
+    for tok in (make_jwt({"token": "x"}, exp=1), make_jwt({"token": "x"}, exp=None)):
+        try:
+            verify_host_token(tok)
+        except AuthError as e:
+            assert "exp" in str(e), str(e)
+        else:
+            raise AssertionError("expired or exp-less token accepted")
+
+
+def test_unsigned_flag_is_ignored_outside_dev() -> None:
+    old = {k: os.environ.get(k) for k in ("UNITY_ALLOW_UNSIGNED", "DEV_MODE")}
+    try:
+        os.environ["UNITY_ALLOW_UNSIGNED"] = "1"
+        os.environ["DEV_MODE"] = "0"
+        assert allow_unsigned() is False
+        os.environ["DEV_MODE"] = "1"
+        assert allow_unsigned() is True
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
 
 
 def test_bad_inner_hmac_is_refused() -> None:
@@ -175,6 +223,7 @@ NEEDS_CRYPTO = {
     "test_happy_path",
     "test_bad_inner_hmac_is_refused",
     "test_missing_key_refuses_rather_than_skips",
+    "test_org_in_unsigned_blob_is_ignored",
 }
 
 

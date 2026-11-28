@@ -175,11 +175,25 @@ def test_classify_inbound_is_exact_not_prefix() -> None:
     assert classify_inbound("Stop.") == "stop"
     assert classify_inbound("START") == "start"
     assert classify_inbound("help") == "help"
-    # The expensive one: a prefix match here unsubscribes a member who was
-    # only talking about the potluck.
-    assert classify_inbound("stop by the potluck at 6") == "reply"
     assert classify_inbound("Can you help me find the nursery?") == "reply"
     assert classify_inbound("yes please") == "reply"
+
+
+def test_classify_inbound_optout_rules() -> None:
+    # Opt-out wrapped in filler is still an opt-out (legacy opts these out).
+    for body in ("please stop", "Stop texting me", "STOP ALL", "opt-out", "Unsub", "arret", "block"):
+        assert classify_inbound(body) == "stop", body
+    # A poll answer must never re-subscribe anyone.
+    for body in ("yes", "Yes!", "subscribe", "optin"):
+        assert classify_inbound(body) == "reply", body
+    assert classify_inbound("resume") == "start"
+    assert classify_inbound("hlp") == "help"
+    # Looks like an opt-out but is not exact: hold for a person, never
+    # auto-unsubscribe (the potluck) and never ignore (the real request).
+    for body in ("stop by the potluck at 6", "take me off this list", "don't text me again", "wrong number"):
+        assert classify_inbound(body) == "review", body
+    # Ordinary words that are also opt-out words do not trip it mid-sentence.
+    assert classify_inbound("see you at the end of service") == "reply"
 
 
 def test_inbound_id_trap() -> None:
