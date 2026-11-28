@@ -4,6 +4,9 @@ Church messaging as a module a partner app embeds in one iframe: compose, send,
 two-way inbox, people, groups, reports. Styled to Ministry Brands Amplify, with
 navigation across the **top** because Amplify already owns the left rail.
 
+**Building this out? Start with [PLAN.md](PLAN.md)** — phases, sprints, tickets
+and the 10M/day load gate. It supersedes the 1e9/day sizing further down.
+
 ```bash
 cp .env.example .env     # fill in ESENDEX_DEFAULT_LICENSE_KEY
 docker compose up --build
