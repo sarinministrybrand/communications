@@ -183,7 +183,7 @@ and must be answered by the end of Sprint 0.
 | # | Decision | Default | Owner |
 |---|---|---|---|
 | D1 | **Sender capacity.** Contracted msg/s on the shared short code, in writing. Is one code for thousands of churches approved by the carriers under the current rules? (Carriers moved against shared short codes from 2018 to 2021; ours may be an approved exception, but that needs to be in writing.) Which of the three options in 1.2 gets us to 10M? | Keep the shared code; add codes or dedicated numbers for the largest churches | Product + Esendex account rep |
-| D2 | Esendex behaviour: does it de-duplicate on `ReferenceID`? Is there a status-query API? Does it pace delivery within one 2,000-recipient request, and at what rate? Does it support MMS? Does it block a handset at code level after STOP? | Assume no to all; design in 5.2 works either way | Esendex support |
+| D2 | Esendex behaviour: does it de-duplicate on `ReferenceID`? Is there a status-query API? Does it pace delivery within one 2,000-recipient request, and at what rate? Does it support MMS? Does it block a handset at code level after STOP? How does it choose `MatchedMessageID` on a shared code? | Assume no to all; design in 5.2 works either way | Esendex support |
 | D3 | Partner directory contract (5.4): partners implement our spec, or we write adapters | Our spec plus an Amplify/Unity reference adapter. Confirm Amplify has a people and groups API | Product + first partner |
 | D4 | Hosting | MB's standard cloud. Needs: container runtime, managed Postgres 16 **with synchronous standby**, managed Redis 7, object storage. Pin the instance sizes used for load gates | Platform team |
 | D5 | Does Amplify ship a component library, and in which framework | If yes, use it; if no, keep the no-build widget and split it into modules | Amplify design team |
@@ -192,7 +192,8 @@ and must be answered by the end of Sprint 0.
 | D8 | Are Amplify's Unity tokens signed in production | Require signed; refuse to boot with `UNITY_ALLOW_UNSIGNED=1` outside dev | Amplify team |
 | D9 | Retention | Message bodies and delivery detail: 90 days hot, 13 months archived. **Consent, opt-outs, audit log and who/when/sender send records: 5 years** (texting claims can be brought years later; confirm the period) | Legal |
 | D10 | **Partner-supplied numbers with no consent evidence** | The partner contract carries `sms_consent {status, source, captured_at}`. Numbers without it are excluded from broadcasts and shown as "needs consent". Whether a one-time opt-in invite is allowed, and whether churches migrating from the legacy system are grandfathered, is a legal call | Product + legal |
-| D11 | **Opt-out scope on a shared code.** A person who texts STOP to the shared code cannot say which church they mean | STOP opts the handset out of **every** church on that code; START reverses it. Confirm against what the legacy system does today | Product + legal |
+| D11 | **Opt-out scope on a shared code.** A person who texts STOP to the shared code cannot say which church they mean | STOP opts the handset out of **every** church on that code; START reverses it. This matches the legacy table, which keys opt-outs by handset and code, not by church. Legal to confirm | Product + legal |
+| D12 | **Reply from a member of two churches on the shared code** (5.3.1 rule 5) | Hold and ask the sender which church. Alternative: offer the full inbox only to churches with a dedicated number, as the legacy handover recommends. Choose once P0-12 shows how many handsets are affected | Product |
 
 Before any external developer gets repo access: rotate every credential
 committed across the HGS repos, **coordinated with the HGS team** so the live
@@ -267,10 +268,48 @@ copy. The load gate measures this rate; it should be zero in practice.
 | Priority lanes | Emergency, then one-to-one inbox replies, then broadcasts. A staff reply never waits behind a mass send |
 | Honesty | Compose shows an estimated delivery window from current queue depth. Reports show queued time |
 | Identification | Every message from the shared code starts with the church name. The segment counter includes it |
-| Inbound routing | `MatchedMessageID` to the outbound message to its church. Fallback: the most recent church to text that handset from the code. Unroutable messages go to a platform triage queue |
+| Inbound routing | Never a silent guess. Rules in 5.3.1 |
 | Keywords | Unique across **all** churches on the code. Allocation and collision handling in the service |
-| Opt-out | Keyed by `(sender, phone)` as well as church (D11) |
+| Opt-out | Keyed by `(sender, phone)`, taken from the number the person actually texted (`ToPhoneNumber`), never inferred (D11) |
 | Growth | `sender` is a table. Adding a second code or a church's own number is data, not code |
+
+#### 5.3.1 Attributing a reply on the shared code
+
+SMS has no threading: a reply to a shared code carries the handset and the code,
+nothing that names the church. Any attribution is an inference, so the rules
+make the inference explicit and refuse to guess when it is unsafe.
+
+**What the legacy system does** (from analysis of the HGS code supplied by the
+product owner; not re-verified here): `getLastQIdForPhoneNumber` takes the most
+recent outbound row for that handset across **all** churches, with no time
+window and without using the number that was texted. Consequences to avoid:
+
+- A member of two churches has replies filed under whichever church texted last,
+  not the one being answered. A private reply can land in the wrong church's hands.
+- A reply can attach to a message from years ago.
+- Dedicated numbers are scoped to the **staff user** who owns the number, so a
+  reply to a colleague's message does not thread.
+- If two-way was not ticked on that message, the reply is stored against nobody.
+- Opt-outs infer the code through a separate cascade ending in "most recent
+  alert", so a STOP can be filed against the wrong number and the person keeps
+  receiving messages.
+
+**Rules here**, applied in order, with `church_id` and `sender_id` written on the
+inbound row at the moment it arrives:
+
+1. **STOP, START, HELP:** apply to the number that was texted. No attribution needed.
+2. **Dedicated number:** the church that owns the number, whoever sent the message.
+3. **Keyword:** the church that owns that keyword on that code.
+4. **Shared code, exactly one church** texted this handset from the code in the
+   last 14 days: that church. (Window is a setting; tune it with P0-12 data.)
+5. **Shared code, more than one church** in the window: hold the message and
+   send one prompt, "Which church is this for? Reply 1 for A, 2 for B". The
+   answer routes the held message. No answer in 24 hours: platform triage (D12).
+6. **No church in the window:** platform triage, plus a generic reply naming the
+   service and how to opt out.
+
+Esendex's `MatchedMessageID` is a hint only. The provider faces the same
+ambiguity, and how it picks a match is unknown (added to D2).
 
 ### 5.4 Partner directory: people and groups by API
 
@@ -479,6 +518,7 @@ Frontend work for Phase 4 can start in Sprint 6 against the OpenAPI contract.
 | P0-9 | Capture a real two-recipient Esendex response; fix the parser and fixture (S19) | Parser test uses the real response |
 | P0-10 | `tools/fakesendex` v1: accept, respond, fire postbacks | Passes the envelope tests |
 | P0-11 | Test harness: Postgres and Redis integration tests for API and worker in CI | One end-to-end send test against fakesendex |
+| P0-12 | Measure the overlap in legacy data: handsets texted by more than one church on the shared code within 7, 14 and 30 days, and the share of inbound replies they produce | Numbers recorded against D12 |
 
 ### Phase 1, Sprints 1 to 3: engine correctness
 
@@ -514,7 +554,7 @@ Sprint 3: completeness.
 | P1-16 | Partition creation as a scheduled job; archiver to object storage per D9 (S17) | Runs daily; day-91 partition archived |
 | P1-17 | Segment calculator: true GSM-7 alphabet, UCS-2, concatenation, church-name prefix (S18) | Table tests: emoji, é, £, 160/161, 70/71 |
 | P1-18 | Consent gate (D10) | No-consent numbers excluded and counted in the preview |
-| P1-19 | **Legacy opt-out import and two-way sync** with the HGS system | Counts reconcile; a STOP on either side blocks both within 1 min |
+| P1-19 | **Legacy opt-out import and two-way sync** with the HGS system. Legacy opt-outs may be filed against the wrong code, so import each one against **every** sender that handset's churches use. Over-suppressing is the safe error; START undoes it | Counts reconcile; a STOP on either side blocks both within 1 min |
 | P1-20 | `usage_daily` rollup (segments and messages per church) | Matches `delivery` exactly |
 | P1-21 | Metrics and alerts: queue depth per lane, send rate, failure rate, postback lag, dead letters, Redis memory | Alert fires in a staged failure |
 | P1-22 | Connection budget: pooler, per-process pool sizes | Documented; holds at 20 replicas |
@@ -592,7 +632,7 @@ Sprint 10.
 | ID | Ticket | Done when |
 |---|---|---|
 | P5-1 | `message` table, thread view, reply on the priority lane | Reply reaches handset in under 10 s during a broadcast |
-| P5-2 | Inbound routing on the shared code (5.3) and platform triage queue | Routing accuracy measured on forwarded legacy traffic |
+| P5-2 | Inbound attribution rules 1 to 6 (5.3.1), hold-and-ask prompt, platform triage queue | Table test per rule; two-church handset is never attributed without an answer; replies to a dedicated number thread regardless of which staff member sent |
 | P5-3 | Assign, close, reopen, notes, unread counts, near-miss opt-out flag | |
 | P5-4 | Live updates by fetch streaming | New reply visible in under 5 s |
 | P5-5 | Keywords and text-to-join: unique per sender, consent captured, added to partner group | Join visible in the partner product |
@@ -602,8 +642,8 @@ Sprint 11.
 
 | ID | Ticket | Done when |
 |---|---|---|
-| P5-7 | **Legacy migration:** churches, Unity org mappings, licence keys, dedicated numbers, keywords | Dry run reconciles on a production copy |
-| P5-8 | Inbound cutover (D7): forward, compare for 7 days, switch | Identical handling for 7 days |
+| P5-7 | **Legacy migration:** churches, Unity org mappings, licence keys, dedicated numbers (owned by the church, not a staff user), keywords. Do **not** migrate shared-code inbound history into inboxes: the legacy rows carry no reliable church | Dry run reconciles on a production copy |
+| P5-8 | Inbound cutover (D7): forward, compare for 7 days, switch. Legacy attribution is known to be wrong in places, so the bar is not "identical" | Every STOP/START/HELP handled the same; every attribution difference explained by a 5.3.1 rule |
 | P5-9 | Church onboarding flow: create church, link partner org, assign sender, import consent | A new church sends in under 10 minutes |
 | P5-10 | Internal support console: find a message, view a church's queue, suspend a church, cancel a running broadcast | Support can do each without a developer |
 | P5-11 | Abuse controls: daily ceiling, link screening, alert on anomalous volume | |
@@ -677,7 +717,7 @@ the sender's rate limit allowing them; inbox reply visible within 5 s.
 | Partner numbers arrive with no consent evidence | High | High | D10; consent field in the contract; gate in P1-18 |
 | Opt-outs lost between legacy and new system | Medium | Very high | P1-19 before any real send; two-way sync until cutover |
 | Double-send on unknown provider outcome | Medium | High | Design 5.2; T5 gates every release |
-| Inbound misrouted between churches on the shared code | Medium | Medium | P5-2 measured on real forwarded traffic; triage queue |
+| A private reply shown to the wrong church on the shared code | Happens today in legacy | High | 5.3.1: no silent guess; hold-and-ask for two-church handsets; D12 sized by P0-12 |
 | Esendex answers (D2) arrive late or are "no" | Medium | Medium | Design assumes "no" |
 | Partner directory APIs slow or incomplete; Amplify may have none | Medium | High | D3 in Sprint 0; cache and reconciliation |
 | Scope creep toward giving, forms, voice | High | Medium | Non-goals in 1.1 |
