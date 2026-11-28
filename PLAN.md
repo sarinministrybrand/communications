@@ -1,12 +1,35 @@
 # Church Communications Platform — Build Plan
 
-**Status:** revision 2, 2026-11-28. **Audience:** the developer(s) building it.
+**Status:** revision 4, 2026-11-28. **Audience:** the developer(s) building it.
 **Scope:** a multi-tenant messaging service (SMS first, then email) that partner
 products embed with one iframe and drive through one API. People and groups come
 from partner APIs; the messaging engine, consent, inbox and reporting live here.
 
 This plan starts from the code already in this repo (see [README](README.md)).
 Section 3 says what exists and what is broken.
+
+**Revision 4** adds a design track (section 8, "Design track"), planned from
+the church admin's side with the double diamond method. It adds research and
+prototype tickets DT-1 to DT-12 in Sprints 0 to 9, decisions D14 and D15, admin
+measures on the pilot exit gate, and a part-time designer to the assumed team.
+No engine ticket changed.
+
+**Revision 3** checks the plan against the legacy HGS source (MessagingService,
+KeywordServiceWebApp, HGSCoreApi and others, read locally; nothing was run and no
+production data was seen). What changed from revision 2:
+
+- Legacy does **not** send from one short code. It resolves a sender per staff
+  user, customer and product, across several short codes and three live
+  providers, and operators can move customers between numbers (section 1.2, D1,
+  D13, P0-13).
+- Section 5.3.1's description of legacy reply attribution is now verified, with
+  corrections.
+- Legacy opt-out matching is looser than this plan's and has a quirk; the
+  keyword list and the cutover bar changed (5.7, P5-8).
+- Inbound replies carry `ReferenceID`; delivery receipts can carry
+  `BackupMessageID`. Both are now handled (5.3.1, I5, P1-9).
+- The `sender` table carries a licence key and provider (5.6). The opt-out
+  import rules are exact instead of blanket (P1-19).
 
 **Revision 2** incorporates an independent adversarial review and one new fact
 from the product owner: **all churches (thousands) send from a single shared
@@ -71,6 +94,24 @@ So "10M in one day" splits in two:
      per-church `long_code`); note T-Mobile caps such numbers at 2,000 to
      200,000 segments per brand per day depending on vetting.
 
+**What the legacy code shows (revision 3).** The product owner's "one shared
+short code" is not how the legacy sender behaves, so the arithmetic above must
+be redone per code once P0-13 lists what is live:
+
+- The sender is resolved in order: the staff user's own number, the customer's
+  number, the product's number, then the platform default. Each has its own
+  licence key (`PrimeMessageSender.vb:63-79`).
+- At least five short codes appear in code: 22383 (old default), 34166 (a
+  release script moves customers to it from 22383), 29988 (SimpleChurch), 31263
+  (ShelbyArena) and 39256 (HCIactive) (`cdyne_sms_response.aspx.vb:300-347`).
+- Each customer is routed to Esendex, Nexmo or Sinch
+  (`MessagingServiceCore.vb:1367`), and an internal failover API moves customers
+  in bulk from one provider number to another and back
+  (`SmsFailoverController.cs`).
+
+This may be good news for capacity (several codes, not one) but which codes
+church customers actually use is a data question, not a code question.
+
 Until D1 is answered, design for the queue being **hours deep on a Sunday**:
 fair sharing between churches, priority lanes, and an honest delivery estimate in
 the compose screen are requirements, not polish.
@@ -104,7 +145,7 @@ email; Sunday reliability proven by a published load test.
 
 | Feature | Phase | Feature | Phase |
 |---|---|---|---|
-| Mass text to groups, people, everyone | 1 | Merge fields | 7 |
+| Mass text to groups, people, everyone | 1 | Merge fields | 7, or 4 under D14 |
 | Scheduling (broken today, see section 3) | 1 | Templates | 7 |
 | Segment, cost and delivery-time preview | 4 | Short links and click tracking | 7 |
 | MMS (only if Esendex supports it: D2) | 4 | Automations | 7 |
@@ -160,7 +201,8 @@ email; Sunday reliability proven by a published load test.
 | I1 | Nothing reads `comms:status`; nothing writes `optout` or `inbound` | P1-7, P1-9 |
 | I2 | STOP list lacks "revoke" and "opt out" (with a space) | P1-7 |
 | I3 | Webhook is unauthenticated and logs phone numbers | P1-8 |
-| I4 | No handling for postbacks that arrive before the send result is written, or out of order | P1-9 |
+| I4 | No handling for postbacks that arrive before the send result is written, or out of order. Legacy confirms this happens: its handler sleeps 60 s and retries when the id is not stored yet | P1-9 |
+| I5 | `BackupMessageID` is ignored. Esendex can retry a message under a new id and report the original through this field; legacy maps it back (`cdyne_sms_response.aspx.vb:158-190`). Without it those receipts match nothing | P1-9 |
 
 **Auth and embed**
 
@@ -182,18 +224,21 @@ and must be answered by the end of Sprint 0.
 
 | # | Decision | Default | Owner |
 |---|---|---|---|
-| D1 | **Sender capacity.** Contracted msg/s on the shared short code, in writing. Is one code for thousands of churches approved by the carriers under the current rules? (Carriers moved against shared short codes from 2018 to 2021; ours may be an approved exception, but that needs to be in writing.) Which of the three options in 1.2 gets us to 10M? | Keep the shared code; add codes or dedicated numbers for the largest churches | Product + Esendex account rep |
-| D2 | Esendex behaviour: does it de-duplicate on `ReferenceID`? Is there a status-query API? Does it pace delivery within one 2,000-recipient request, and at what rate? Does it support MMS? Does it block a handset at code level after STOP? How does it choose `MatchedMessageID` on a shared code? | Assume no to all; design in 5.2 works either way | Esendex support |
-| D3 | Partner directory contract (5.4): partners implement our spec, or we write adapters | Our spec plus an Amplify/Unity reference adapter. Confirm Amplify has a people and groups API | Product + first partner |
+| D1 | **Sender capacity.** Contracted msg/s on the shared short code, in writing. Is one code for thousands of churches approved by the carriers under the current rules? (Carriers moved against shared short codes from 2018 to 2021; ours may be an approved exception, but that needs to be in writing.) Which of the three options in 1.2 gets us to 10M? **Ask per code: P0-13 lists the codes church customers are on today** | Keep the shared code; add codes or dedicated numbers for the largest churches | Product + Esendex account rep |
+| D2 | Esendex behaviour: does it de-duplicate on `ReferenceID`? Is there a status-query API? Does it pace delivery within one 2,000-recipient request, and at what rate? Does it support MMS? Does it block a handset at code level after STOP? How does it choose `MatchedMessageID` and the `ReferenceID` it returns on an inbound reply on a shared code? When does it send `BackupMessageID`? Can it sign or add a secret to postbacks (legacy has no check at all)? | Assume no to all; design in 5.2 works either way | Esendex support |
+| D3 | Partner directory contract (5.4): partners implement our spec, or we write adapters | Our spec plus an Amplify/Unity reference adapter. Confirm Amplify has a people and groups API. Note the legacy partner API works the other way round: partners **push** contacts in (`ContactsController`), so existing partners have push integrations, not a directory to pull from | Product + first partner |
 | D4 | Hosting | MB's standard cloud. Needs: container runtime, managed Postgres 16 **with synchronous standby**, managed Redis 7, object storage. Pin the instance sizes used for load gates | Platform team |
 | D5 | Does Amplify ship a component library, and in which framework | If yes, use it; if no, keep the no-build widget and split it into modules | Amplify design team |
 | D6 | Email provider and sending domains | Amazon SES or MB's existing provider; per-church DKIM | Product + platform |
-| D7 | Inbound cutover from `cdyne_sms_response.aspx` in `HGS-KeywordServiceWebApp` | Legacy forwards every inbound here; opt-outs sync both ways for the whole parallel run; then swap | HGS team |
+| D7 | Inbound cutover from `cdyne_sms_response.aspx` in `HGS-KeywordServiceWebApp` | Legacy forwards every inbound here; opt-outs sync both ways for the whole parallel run; then swap. The handler already has a switch (`PushCdyneSmsToQueue`, off today) that copies each Esendex callback to a Service Bus topic; the forward may be a config change plus a subscriber | HGS team |
 | D8 | Are Amplify's Unity tokens signed in production | Require signed; refuse to boot with `UNITY_ALLOW_UNSIGNED=1` outside dev | Amplify team |
 | D9 | Retention | Message bodies and delivery detail: 90 days hot, 13 months archived. **Consent, opt-outs, audit log and who/when/sender send records: 5 years** (texting claims can be brought years later; confirm the period) | Legal |
 | D10 | **Partner-supplied numbers with no consent evidence** | The partner contract carries `sms_consent {status, source, captured_at}`. Numbers without it are excluded from broadcasts and shown as "needs consent". Whether a one-time opt-in invite is allowed, and whether churches migrating from the legacy system are grandfathered, is a legal call | Product + legal |
-| D11 | **Opt-out scope on a shared code.** A person who texts STOP to the shared code cannot say which church they mean | STOP opts the handset out of **every** church on that code; START reverses it. This matches the legacy table, which keys opt-outs by handset and code, not by church. Legal to confirm | Product + legal |
+| D11 | **Opt-out scope on a shared code.** A person who texts STOP to the shared code cannot say which church they mean | STOP opts the handset out of **every** church on that code; START reverses it. This matches the legacy table (`sms_optout`: handset and code only, verified), which has no church column. A legacy row with code 0 blocks the handset on every sender. Legal to confirm | Product + legal |
 | D12 | **Reply from a member of two churches on the shared code** (5.3.1 rule 5) | Hold and ask the sender which church. Alternative: offer the full inbox only to churches with a dedicated number, as the legacy handover recommends. Choose once P0-12 shows how many handsets are affected | Product |
+| D13 | **Churches not on Esendex.** Legacy routes each customer to Esendex, Nexmo or Sinch, and failover moves them between providers | Migrate only churches whose sender is an Esendex number. Churches on Nexmo or Sinch move to an Esendex sender at migration, or wait. Their opt-outs are imported regardless (all providers write the same `sms_optout` table) | Product + HGS team |
+| D14 | **Merge fields before the pilot.** Legacy already puts first name, last name and three custom fields into a text (`PrimeMessageSender.vb:105-112`); this plan has merge fields in Phase 7, after the pilot, so churches moving from legacy would lose them | Decide from DT-4 usage data. If pilot candidates use them, move P7-1 into Sprint 9 (about a week of Phase 4 time) | Product |
+| D15 | **Per-recipient translation.** Legacy translates a message into each recipient's language. This plan neither includes it nor lists it as a non-goal | Decide from DT-4 usage data. Default: non-goal for v1, stated to pilot churches up front | Product |
 
 Before any external developer gets repo access: rotate every credential
 committed across the HGS repos, **coordinated with the HGS team** so the live
@@ -270,7 +315,7 @@ copy. The load gate measures this rate; it should be zero in practice.
 | Identification | Every message from the shared code starts with the church name. The segment counter includes it |
 | Inbound routing | Never a silent guess. Rules in 5.3.1 |
 | Keywords | Unique across **all** churches on the code. Allocation and collision handling in the service |
-| Opt-out | Keyed by `(sender, phone)`, taken from the number the person actually texted (`ToPhoneNumber`), never inferred (D11) |
+| Opt-out | Keyed by `(sender, phone)`, taken from the number the person actually texted (`ToPhoneNumber`), never inferred (D11). When a church is moved to another sender, its handsets' opt-outs are copied to the new sender in the same change. Legacy does not do this: after a failover, opt-outs filed against the old number stop applying |
 | Growth | `sender` is a table. Adding a second code or a church's own number is data, not code |
 
 #### 5.3.1 Attributing a reply on the shared code
@@ -279,20 +324,31 @@ SMS has no threading: a reply to a shared code carries the handset and the code,
 nothing that names the church. Any attribution is an inference, so the rules
 make the inference explicit and refuse to guess when it is unsafe.
 
-**What the legacy system does** (from analysis of the HGS code supplied by the
-product owner; not re-verified here): `getLastQIdForPhoneNumber` takes the most
-recent outbound row for that handset across **all** churches, with no time
-window and without using the number that was texted. Consequences to avoid:
+**What the legacy system does** (verified in revision 3 against
+`HGS-KeywordServiceWebApp`, `AppCode/utilities.vb:753-804` and
+`cdyne_sms_response.aspx.vb:274-515`; the Nexmo, Sinch and Twilio handlers call
+the same functions). `getLastQIdForPhoneNumber` takes the most recent
+**two-way** outbound row for that handset, from any customer with two-way
+enabled, with no time window. The filter by owning account is commented out.
+The number that was texted is used only to look up a staff user's own number.
+Consequences to avoid:
 
-- A member of two churches has replies filed under whichever church texted last,
-  not the one being answered. A private reply can land in the wrong church's hands.
+- A member of two churches has replies filed under whichever church last sent a
+  two-way message, not the one being answered. A private reply can land in the
+  wrong church's hands.
 - A reply can attach to a message from years ago.
-- Dedicated numbers are scoped to the **staff user** who owns the number, so a
-  reply to a colleague's message does not thread.
-- If two-way was not ticked on that message, the reply is stored against nobody.
-- Opt-outs infer the code through a separate cascade ending in "most recent
-  alert", so a STOP can be filed against the wrong number and the person keeps
-  receiving messages.
+- A staff user's own number is scoped to that **user**, so a reply to a
+  colleague's message does not thread. A **church-level** number gets no filter
+  at all, so a reply to a church's own number can still attach to another
+  church's message.
+- A reply to a message without two-way ticked skips that message and attaches
+  to an older two-way message if one exists, possibly another church's. Only if
+  there is none is it stored against nobody, and the sender gets a one-time
+  HELP text.
+- A STOP to a known short code is filed against that code correctly. Only when
+  the texted number is not a known code (Esendex's long-code pool) does legacy
+  infer it: from the `ReferenceID`, else from the most recent alert to that
+  handset, else it files code 0, which blocks every sender.
 
 **Rules here**, applied in order, with `church_id` and `sender_id` written on the
 inbound row at the moment it arrives:
@@ -308,8 +364,13 @@ inbound row at the moment it arrives:
 6. **No church in the window:** platform triage, plus a generic reply naming the
    service and how to opt out.
 
-Esendex's `MatchedMessageID` is a hint only. The provider faces the same
-ambiguity, and how it picks a match is unknown (added to D2).
+Esendex sends two hints on an inbound reply: `MatchedMessageID` and the
+`ReferenceID` of the message it matched. Our `ReferenceID` carries the batch id,
+so it names a broadcast and therefore a church. Legacy reads it but does not use
+it for attribution. Both remain hints: the provider faces the same ambiguity,
+and how it picks a match is unknown (D2). Store both on the inbound row, measure
+in P0-12 how often they agree with rule 4, and only then decide whether they may
+break a rule 5 tie instead of prompting.
 
 ### 5.4 Partner directory: people and groups by API
 
@@ -352,7 +413,7 @@ Optional webhooks to us: person.updated, person.deleted, group.membership_change
 | Partner backend | API key (hashed at rest, scoped, per-key rate limit) |
 | Browser iframe | Embed session JWT, 15 minutes, minted by `POST /v1/embed/sessions`, **carrying the allowed parent origins** |
 | Amplify | Unity SSO token, exchanged for an embed session; expiry enforced; org id taken from signed or decrypted content only |
-| Esendex | Rotating secret, IP allow-list, and `ToPhoneNumber` must be a known sender. STOP and START get these checks without exception |
+| Esendex | Secret in the postback URL (rotated), IP allow-list, and `ToPhoneNumber` must be a known sender. STOP and START get these checks without exception. Whether Esendex can sign postbacks is in D2; the legacy handler checks nothing |
 
 ```html
 <script src="https://comms.example.com/embed.js"></script>
@@ -378,7 +439,7 @@ Optional webhooks to us: person.updated, person.deleted, group.membership_change
 |---|---|
 | `partner` (new) | Owns API keys and allowed embed origins |
 | `church` | Add `partner_id`, `timezone`, `quiet_hours`, `status` (active/suspended) |
-| `sender` (new) | Number, type, msg/s limit, daily cap, shared or dedicated |
+| `sender` (new) | Number, type, provider, **licence key** (legacy pairs every number with its own key; replaces `church.license_key`), msg/s limit, daily cap, shared or dedicated |
 | `person`, `grp`, `grp_member` | Add `external_id`, `synced_at`; drop unique phone |
 | `consent` (new) | Per phone or email, per channel: status, source, timestamp, evidence |
 | `optout` | Add `sender_id` scope and `source` (keyword, staff, legacy import, partner) |
@@ -392,10 +453,19 @@ Optional webhooks to us: person.updated, person.deleted, group.membership_change
 
 ### 5.7 Compliance, built in
 
-- **Opt-out keywords:** stop, stopall, quit, end, revoke, opt out, optout,
-  cancel, unsubscribe, matched on the whole message. Messages that look like an
-  opt-out but are not exact ("please stop texting me") are flagged in the inbox
-  for a human to action within a business day. Every opt-out gets a confirmation.
+- **Opt-out keywords:** stop, stopall, stop all, quit, end, revoke, opt out,
+  optout, cancel, unsubscribe, plus the three legacy accepts today: unsub,
+  block, arret. Matched on the whole message after trimming punctuation.
+  **START:** start, resume, unstop. **HELP:** help, hlp, aide, info. Messages
+  that look like an opt-out but are not exact ("please stop texting me") are
+  flagged in the inbox for a human to action within a business day. Every
+  opt-out gets a confirmation.
+- **Known differences from legacy** (`getReplyType`,
+  `cdyne_sms_response.aspx.vb:584-606`). Legacy matches by prefix, so "stopping
+  by later" opts a person out; we flag it instead. If the message contains a
+  space, legacy tests only the text after the first space, so "STOP ALL" is
+  **not** an opt-out in legacy and "please stop" is. We honour "stop all" and
+  flag "please stop". These differences are expected in P5-8.
 - Opt-out and quiet hours are checked **when each batch is sent**, not only at
   fan-out.
 - Quiet hours by recipient timezone. A send that reaches quiet hours pauses and
@@ -481,7 +551,9 @@ proves D1.
 ## 8. Phases and sprints
 
 Two-week sprints. Assumed team: two backend/full-stack engineers, one frontend
-engineer, part-time QA and platform. Estimates are planning numbers.
+engineer, part-time QA and platform, and **a part-time designer/researcher for
+the design track** (new in revision 4; without one, the frontend engineer runs
+it and Phase 4 starts later). Estimates are planning numbers.
 
 **One developer cannot deliver this plan on anything like this calendar.** With
 one person, build Phases 0 to 5 only (SMS, embed, inbox), expect roughly a year,
@@ -501,13 +573,60 @@ them in Sprint 0 regardless.
 | 7 Engagement | 14 to 15 | Templates, merge fields, links, automations |
 | 8 Launch | 16 | Security review, DR drill, final load gate, GA |
 
-Frontend work for Phase 4 can start in Sprint 6 against the OpenAPI contract.
+Frontend work for Phase 4 can start in Sprint 6 against the OpenAPI contract
+**and the prototypes that passed testing in the design track**.
+
+### Design track: the church admin's side (Sprints 0 to 9, alongside the engine)
+
+The phases above are engine-first: a church admin sees nothing usable until
+Sprint 8, and no step asks them what they need. This track runs in parallel and
+uses the double diamond: diverge to find the right problem, converge on it,
+diverge on solutions, converge on what ships.
+
+**Who it is for.** The office administrator or communications lead. Not
+technical. Sends a few texts a week, mostly Thursday to Sunday morning, and
+takes the phone call when a text reaches the wrong people or keeps arriving
+after someone texted STOP.
+
+**Nobody has been interviewed yet.** The five problems below are hypotheses
+from the legacy code and competitor reviews. Discover exists to confirm, reorder
+or drop them:
+
+1. Will it get there on time? A Sunday 8am text that lands at 11 is worthless.
+2. Did I pick the right people? Who and how many, before pressing send.
+3. Who replied, and has anyone answered? Replies are pastoral, sometimes private.
+4. Am I safe? Nobody who opted out or never agreed gets a text.
+5. What will it cost? No surprises from long messages.
+
+**Diamond 1: the right problem.**
+
+| ID | Stage | Sprint | Ticket | Done when |
+|---|---|---|---|---|
+| DT-1 | Discover | 0 | Recruit 8 to 10 church admins, including two large and two multi-campus churches. These are also the pilot candidates | Sessions booked |
+| DT-2 | Discover | 0 to 1 | Interviews: what they send, when, and what went wrong last time | Notes for every session |
+| DT-3 | Discover | 0 to 1 | Watch three admins send a real message in the legacy product | Hesitations and workarounds recorded |
+| DT-4 | Discover | 0 to 1 | Evidence pull: support tickets and Pendo data for the current Communications product; legacy usage of two-way, keywords, merge fields, translation and scheduling; P0-12 overlap numbers | One summary; D14 and D15 answered |
+| DT-5 | Define | 1 | One-page problem brief: the three problems we commit to, a measure for each, and what v1 will not solve | Signed off by product; contradictions with this plan raised as changes to it |
+
+**Diamond 2: the right solution.** Clickable prototypes, each tested in two
+rounds with five admins. A prototype that fails twice is redesigned or cut, not
+built.
+
+| ID | Stage | Sprint | Ticket | Feeds |
+|---|---|---|---|---|
+| DT-6 | Develop | 2 to 3 | Compose: audience, reach, cost and "arrives by" shown before send | P4-3, P1-14 |
+| DT-7 | Develop | 2 to 3 | Undo window and typed confirmation for large sends | P4-4 |
+| DT-8 | Develop | 4 to 5 | Inbox with assignment, and the "which church is this for?" prompt. Test the prompt with **members** as well as admins: they are the ones who receive it | P5-2, P5-3, D12 |
+| DT-9 | Develop | 4 to 5 | Opt-out and consent in plain words in the people list | P4-9, D10 |
+| DT-10 | Develop | 6 to 7 | Queue honesty: what the admin sees when the queue is hours deep on a Sunday; reports and queued time | P4-7, P1-14 |
+| DT-11 | Deliver | 8 to 9 | Usability test of the built widget with five admins against fakesendex | First message sent without help in under 10 minutes |
+| DT-12 | Deliver | 9 | Instrument the pilot measures in section 9 | Each measure visible per church before the pilot starts |
 
 ### Phase 0, Sprint 0: foundations
 
 | ID | Ticket | Done when |
 |---|---|---|
-| P0-1 | Answer D1 to D11 or accept defaults in writing. Send the D1/D2 questions to Esendex on day one | Decision log committed here |
+| P0-1 | Answer D1 to D13 or accept defaults in writing (D14 and D15 follow DT-4 in Sprint 1). Send the D1/D2 questions to Esendex on day one | Decision log committed here |
 | P0-2 | Rotate leaked HGS credentials, coordinated with the HGS team | Old keys rejected; live sender unaffected |
 | P0-3 | Dev, staging, prod (D4), instance sizes recorded | `readyz` green in all three |
 | P0-4 | CI/CD: build, test, deploy to staging on merge. CI runs **all** test modules | Merged PR reaches staging; `test_auth` runs |
@@ -518,7 +637,8 @@ Frontend work for Phase 4 can start in Sprint 6 against the OpenAPI contract.
 | P0-9 | Capture a real two-recipient Esendex response; fix the parser and fixture (S19) | Parser test uses the real response |
 | P0-10 | `tools/fakesendex` v1: accept, respond, fire postbacks | Passes the envelope tests |
 | P0-11 | Test harness: Postgres and Redis integration tests for API and worker in CI | One end-to-end send test against fakesendex |
-| P0-12 | Measure the overlap in legacy data: handsets texted by more than one church on the shared code within 7, 14 and 30 days, and the share of inbound replies they produce | Numbers recorded against D12 |
+| P0-12 | Measure the overlap in legacy data, **per sender code**: handsets texted by more than one church on the same code within 7, 14 and 30 days, and the share of inbound replies they produce. Also: how often the inbound `ReferenceID` is present and names the church rule 4 would pick | Numbers recorded against D12 |
+| P0-13 | **Sender inventory** from the legacy database: rows of `sms_long_codes` and `sms_providers`; church customers per code and provider (`customers.sms_long_code`, `sms_provider_id`, product default); staff users with their own number (`user_sms_preference`); active failovers (`saved_sms_*` columns) | One table in this repo; D1 and D13 answered from it |
 
 ### Phase 1, Sprints 1 to 3: engine correctness
 
@@ -539,7 +659,7 @@ Sprint 2: postbacks and the shared code.
 
 | ID | Ticket | Done when |
 |---|---|---|
-| P1-9 | Status writer: batched updates, partition date from `ReferenceID`, forward-only, parking for early postbacks (I1, I4) | 5,000 postbacks/s; out-of-order test passes |
+| P1-9 | Status writer: batched updates, partition date from `ReferenceID`, forward-only, parking for early postbacks, `BackupMessageID` mapped to the original row, legacy receipt codes (000 and 003 delivered, 004 en route, others failed with reason) (I1, I4, I5) | 5,000 postbacks/s; out-of-order test passes; a receipt under a backup id updates the original row |
 | P1-10 | `sender` table; churches reference a sender | Shared code is a row, not a default |
 | P1-11 | Global rate limiter per sender; batch size derived from rate (S14, D2) | fakesendex never sees the limit exceeded |
 | P1-12 | Scheduler in front of the send queue: weighted fairness across churches, three priority lanes (S14). **Budget the whole sprint for one engineer** | T4 fairness passes at small scale; reply overtakes a running broadcast |
@@ -554,7 +674,7 @@ Sprint 3: completeness.
 | P1-16 | Partition creation as a scheduled job; archiver to object storage per D9 (S17) | Runs daily; day-91 partition archived |
 | P1-17 | Segment calculator: true GSM-7 alphabet, UCS-2, concatenation, church-name prefix (S18) | Table tests: emoji, é, £, 160/161, 70/71 |
 | P1-18 | Consent gate (D10) | No-consent numbers excluded and counted in the preview |
-| P1-19 | **Legacy opt-out import and two-way sync** with the HGS system. Legacy opt-outs may be filed against the wrong code, so import each one against **every** sender that handset's churches use. Over-suppressing is the safe error; START undoes it | Counts reconcile; a STOP on either side blocks both within 1 min |
+| P1-19 | **Legacy opt-out import and two-way sync** with the HGS system. Source is the single `sms_optout` table, written by all providers' handlers. Rules: a row with code 0 is imported against **every** sender; a row with a known code is imported against that sender **and** any sender its churches have since been moved to (failover, the 22383 to 34166 move); a row whose code is not a known sender was inferred by legacy, so import it against every sender that handset's churches use. Over-suppressing is the safe error; START undoes it. Legacy START also clears `contacts.no_text_message` for that phone in every church; mirror that | Counts reconcile; a STOP on either side blocks both within 1 min |
 | P1-20 | `usage_daily` rollup (segments and messages per church) | Matches `delivery` exactly |
 | P1-21 | Metrics and alerts: queue depth per lane, send rate, failure rate, postback lag, dead letters, Redis memory | Alert fires in a staged failure |
 | P1-22 | Connection budget: pooler, per-process pool sizes | Documented; holds at 20 replicas |
@@ -642,8 +762,8 @@ Sprint 11.
 
 | ID | Ticket | Done when |
 |---|---|---|
-| P5-7 | **Legacy migration:** churches, Unity org mappings, licence keys, dedicated numbers (owned by the church, not a staff user), keywords. Do **not** migrate shared-code inbound history into inboxes: the legacy rows carry no reliable church | Dry run reconciles on a production copy |
-| P5-8 | Inbound cutover (D7): forward, compare for 7 days, switch. Legacy attribution is known to be wrong in places, so the bar is not "identical" | Every STOP/START/HELP handled the same; every attribution difference explained by a 5.3.1 rule |
+| P5-7 | **Legacy migration:** churches, Unity org mappings, licence keys, senders with their licence keys (from P0-13), dedicated numbers (owned by the church, not a staff user; legacy has both user-level and church-level numbers), keywords (legacy looks up by keyword and code and takes the first row, with a null code meaning the default code, so report and resolve collisions before import). Only churches in scope under D13. Do **not** migrate shared-code inbound history into inboxes: the legacy rows carry no reliable church | Dry run reconciles on a production copy |
+| P5-8 | Inbound cutover (D7): forward, compare for 7 days, switch. Legacy attribution is known to be wrong in places, so the bar is not "identical" | Every STOP/START/HELP difference is one of the known differences listed in 5.7, and none leaves a person opted in whom legacy opted out without an inbox flag; every attribution difference explained by a 5.3.1 rule |
 | P5-9 | Church onboarding flow: create church, link partner org, assign sender, import consent | A new church sends in under 10 minutes |
 | P5-10 | Internal support console: find a message, view a church's queue, suspend a church, cancel a running broadcast | Support can do each without a developer |
 | P5-11 | Abuse controls: daily ceiling, link screening, alert on anomalous volume | |
@@ -697,10 +817,10 @@ send path, docs updated, second-person review.
 
 | Gate | Criteria |
 |---|---|
-| End of Phase 0 | D1, D10, D11 answered; auth and embed fixes merged |
+| End of Phase 0 | D1, D10, D11, D13 answered; sender inventory (P0-13) done; auth and embed fixes merged |
 | End of Phase 2 | Section 7.1 passes on SMS; live canary done; sender capacity plan agreed |
 | Pilot start | Legacy opt-outs imported and syncing; consent gate on; support console live |
-| Pilot exit | 4 weeks; zero duplicate or lost sends; delivery rate within 1 point of legacy; zero opt-out violations; pilot churches would not go back |
+| Pilot exit | 4 weeks; zero duplicate or lost sends; delivery rate within 1 point of legacy; zero opt-out violations; pilot churches would not go back. Admin measures (DT-12): a new admin sends a first message without help in under 10 minutes; "arrives by" estimate within 20% of actual; share of replies answered within a working day is higher in week 4 than week 1; support contacts per church below legacy; cancelled or regretted sends tracked and falling |
 | GA | Final load gate; security review closed; DR drill done; runbooks rehearsed |
 
 Objectives at GA: API availability 99.9%; 99% of messages claimed within 60 s of
@@ -718,11 +838,19 @@ the sender's rate limit allowing them; inbox reply visible within 5 s.
 | Opt-outs lost between legacy and new system | Medium | Very high | P1-19 before any real send; two-way sync until cutover |
 | Double-send on unknown provider outcome | Medium | High | Design 5.2; T5 gates every release |
 | A private reply shown to the wrong church on the shared code | Happens today in legacy | High | 5.3.1: no silent guess; hold-and-ask for two-church handsets; D12 sized by P0-12 |
+| Church customers turn out to be spread over several codes and providers, not one shared code | Likely, from the legacy code | Medium | P0-13 in Sprint 0; D13; `sender` is a table, so several codes are data |
+| A church is moved to another sender and its opt-outs do not follow | Happens today in legacy failover | Very high | Opt-outs copied with the move (5.3); P1-19 import covers past moves |
 | Esendex answers (D2) arrive late or are "no" | Medium | Medium | Design assumes "no" |
 | Partner directory APIs slow or incomplete; Amplify may have none | Medium | High | D3 in Sprint 0; cache and reconciliation |
+| The widget is built to an untested idea of what church admins need | High without the design track | High | DT-1 to DT-12; prototypes tested before Phase 4 builds them |
+| Pilot churches lose legacy features they use (merge fields, translation) | Unknown until DT-4 | Medium | D14, D15 |
 | Scope creep toward giving, forms, voice | High | Medium | Non-goals in 1.1 |
 
-**Not yet verified, flagged so nobody builds on them:** the short code's
+**Not yet verified, flagged so nobody builds on them:** which sender codes and
+providers church customers are on today (code read only, no data: P0-13); the
+stored procedure `sp_Alerts_GetCDyneTextAlert`, which resolves the legacy sender
+and is in none of the repos read; how Esendex picks the `ReferenceID` on an
+inbound reply and when it sends `BackupMessageID`; the short code's
 contracted rate and carrier standing; Esendex MMS support, `ReferenceID`
 de-duplication, in-request pacing and code-level STOP blocking; whether Amplify
 exposes people and groups by API; the effective date of the FCC opt-out rule
